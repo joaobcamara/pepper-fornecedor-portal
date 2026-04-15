@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: fornecedor-portal
+    runtime: node
+    plan: starter
+    region: virginia
+    autoDeployTrigger: commit
+    healthCheckPath: /login
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_DEMO_AUTH
+        value: "false"
+      - key: TINY_API_BASE_URL
+        value: https://api.tiny.com.br/api2
+      - key: SUPABASE_STORAGE_BUCKET
+        value: portal-assets
+      - key: OPENAI_SUGGESTION_MODEL
+        value: gpt-4o-mini

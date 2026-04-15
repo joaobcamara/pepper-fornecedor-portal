@@ -1,0 +1,725 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum CompanyType {
+  MATRIX
+  DEPENDENT
+}
+
+enum IntegrationSyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  ERROR
+}
+
+model Company {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  slug               String                    @unique
+  name               String
+  legalName          String?
+  type               CompanyType
+  isPrimary          Boolean                   @default(false)
+  active             Boolean                   @default(true)
+  createdAt          DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime                  @updatedAt @db.Timestamptz(6)
+  apiAccounts        CompanyApiAccount[]
+  webhookSources     CompanyWebhookSource[]
+  variantLinks       CatalogVariantCompanyLink[]
+  inventoryGroupSources CatalogInventoryGroup[]
+  inventorySnapshots CatalogInventoryCompanySnapshot[]
+  prices             CatalogMasterPrice[]
+  priceLists         CatalogPriceList[]
+  categories         CatalogCategory[]
+  tagGroups          CatalogTagGroup[]
+  tags               CatalogTag[]
+  marketplaceListings CatalogMarketplaceListing[]
+  catalogImages      CatalogMasterImage[]
+  contacts           Contact[]
+  customerLinks      CustomerCompanyLink[]
+  vendors            Vendor[]
+  crmStages          CrmStage[]
+  crmSubjects        CrmSubject[]
+  salesOrders        MultiSalesOrder[]
+  accountsReceivable AccountReceivable[]
+  paymentMethods     PaymentMethod[]
+  invoiceRecords     InvoiceRecord[]
+  shipments          Shipment[]
+  shipmentGroupings  ShipmentGrouping[]
+  shippingMethods    ShippingMethod[]
+  freightQuotes      FreightQuote[]
+  pickingSeparations PickingSeparation[]
+  syncRuns           IntegrationSyncRun[]
+  syncErrors         IntegrationSyncError[]
+  rawPayloads        IntegrationRawPayload[]
+  webhookLogs        MultiTinyWebhookLog[]
+  reconcileJobs      IntegrationReconcileJob[]
+}
+
+model CompanyApiAccount {
+  id                  String    @id @default(uuid()) @db.Uuid
+  companyId           String    @db.Uuid
+  provider            String
+  accountLabel        String
+  baseUrl             String?
+  tokenEnvKey         String
+  webhookSecretEnvKey String?
+  active              Boolean   @default(true)
+  createdAt           DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(6)
+  company             Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model CompanyWebhookSource {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @db.Uuid
+  provider       String
+  eventType      String
+  endpointPath   String
+  secretEnvKey   String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model CatalogMasterProduct {
+  id                String                     @id @default(uuid()) @db.Uuid
+  skuParent         String                     @unique
+  baseCode          String?
+  name              String
+  brand             String?
+  categoryPath      String?
+  material          String?
+  composition       String?
+  gender            String?
+  model             String?
+  style             String?
+  descriptionShort  String?
+  descriptionLong   String?
+  salesContextAi    String?
+  searchText        String?
+  intentTags        Json?
+  active            Boolean                    @default(true)
+  createdAt         DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime                   @updatedAt @db.Timestamptz(6)
+  variants          CatalogMasterVariant[]
+  categories        CatalogCategory[]
+  images            CatalogMasterImage[]
+  marketplaceListings CatalogMarketplaceListing[]
+  priceExceptions   CatalogPriceListException[]
+  productTags       CatalogProductTag[]
+  salesOrderItems   MultiSalesOrderItem[]
+}
+
+model CatalogMasterVariant {
+  id                        String                           @id @default(uuid()) @db.Uuid
+  catalogMasterProductId    String                           @db.Uuid
+  sku                       String                           @unique
+  quantityCode              String?
+  sizeCode                  String?
+  sizeLabel                 String?
+  colorCode                 String?
+  colorLabel                String?
+  active                    Boolean                          @default(true)
+  salesContextAi            String?
+  searchText                String?
+  intentTags                Json?
+  createdAt                 DateTime                         @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime                         @updatedAt @db.Timestamptz(6)
+  catalogMasterProduct      CatalogMasterProduct             @relation(fields: [catalogMasterProductId], references: [id], onDelete: Cascade)
+  companyLinks              CatalogVariantCompanyLink[]
+  inventoryGroup            CatalogInventoryGroup?
+  inventorySnapshots        CatalogInventoryCompanySnapshot[]
+  prices                    CatalogMasterPrice[]
+  priceExceptions           CatalogPriceListException[]
+  images                    CatalogMasterImage[]
+  productTags               CatalogProductTag[]
+  salesOrderItems           MultiSalesOrderItem[]
+}
+
+model CatalogVariantCompanyLink {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  catalogMasterVariantId String               @db.Uuid
+  companyId            String                 @db.Uuid
+  sku                  String
+  tinyProductId        BigInt?
+  tinyParentId         BigInt?
+  tinyCode             String?
+  lastSyncAt           DateTime?              @db.Timestamptz(6)
+  syncStatus           IntegrationSyncStatus  @default(PENDING)
+  rawPayload           Json?
+  createdAt            DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime               @updatedAt @db.Timestamptz(6)
+  catalogMasterVariant CatalogMasterVariant   @relation(fields: [catalogMasterVariantId], references: [id], onDelete: Cascade)
+  company              Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([catalogMasterVariantId, companyId])
+}
+
+model CatalogInventoryGroup {
+  id                        String                 @id @default(uuid()) @db.Uuid
+  catalogMasterVariantId    String                 @unique @db.Uuid
+  availableMultiCompanyStock Decimal               @default(0) @db.Decimal(14, 2)
+  stockStatus               String?
+  lastStockSyncAt           DateTime?              @db.Timestamptz(6)
+  inventorySyncStatus       IntegrationSyncStatus  @default(PENDING)
+  sourceCompanyId           String?                @db.Uuid
+  createdAt                 DateTime               @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime               @updatedAt @db.Timestamptz(6)
+  catalogMasterVariant      CatalogMasterVariant   @relation(fields: [catalogMasterVariantId], references: [id], onDelete: Cascade)
+  sourceCompany             Company?               @relation(fields: [sourceCompanyId], references: [id])
+}
+
+model CatalogInventoryCompanySnapshot {
+  id                        String               @id @default(uuid()) @db.Uuid
+  catalogMasterVariantId    String               @db.Uuid
+  companyId                 String               @db.Uuid
+  tinyProductId             BigInt?
+  availableMultiCompanyStock Decimal?            @db.Decimal(14, 2)
+  snapshotAt                DateTime             @db.Timestamptz(6)
+  payload                   Json?
+  catalogMasterVariant      CatalogMasterVariant @relation(fields: [catalogMasterVariantId], references: [id], onDelete: Cascade)
+  company                   Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model CatalogMasterPrice {
+  id                     String               @id @default(uuid()) @db.Uuid
+  catalogMasterVariantId String               @db.Uuid
+  companyId              String?              @db.Uuid
+  priceSale              Decimal?             @db.Decimal(14, 2)
+  pricePromotional       Decimal?             @db.Decimal(14, 2)
+  priceCost              Decimal?             @db.Decimal(14, 2)
+  currency               String               @default("BRL")
+  source                 String?
+  syncedAt               DateTime?            @db.Timestamptz(6)
+  catalogMasterVariant   CatalogMasterVariant @relation(fields: [catalogMasterVariantId], references: [id], onDelete: Cascade)
+  company                Company?             @relation(fields: [companyId], references: [id])
+}
+
+model CatalogPriceList {
+  id          String                      @id @default(uuid()) @db.Uuid
+  companyId   String                      @db.Uuid
+  tinyListId  BigInt?
+  name        String
+  active      Boolean                     @default(true)
+  createdAt   DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime                    @updatedAt @db.Timestamptz(6)
+  company     Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  exceptions  CatalogPriceListException[]
+}
+
+model CatalogPriceListException {
+  id                     String               @id @default(uuid()) @db.Uuid
+  catalogPriceListId     String               @db.Uuid
+  catalogMasterProductId String?              @db.Uuid
+  catalogMasterVariantId String?              @db.Uuid
+  priceSale              Decimal?             @db.Decimal(14, 2)
+  pricePromotional       Decimal?             @db.Decimal(14, 2)
+  createdAt              DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime             @updatedAt @db.Timestamptz(6)
+  catalogPriceList       CatalogPriceList     @relation(fields: [catalogPriceListId], references: [id], onDelete: Cascade)
+  catalogMasterProduct   CatalogMasterProduct? @relation(fields: [catalogMasterProductId], references: [id])
+  catalogMasterVariant   CatalogMasterVariant? @relation(fields: [catalogMasterVariantId], references: [id])
+}
+
+model CatalogCategory {
+  id                     String               @id @default(uuid()) @db.Uuid
+  companyId              String?              @db.Uuid
+  tinyCategoryId         BigInt?
+  parentId               String?              @db.Uuid
+  catalogMasterProductId String?              @db.Uuid
+  name                   String
+  path                   String
+  level                  Int?
+  active                 Boolean              @default(true)
+  company                Company?             @relation(fields: [companyId], references: [id])
+  parent                 CatalogCategory?     @relation("CatalogCategoryTree", fields: [parentId], references: [id])
+  children               CatalogCategory[]    @relation("CatalogCategoryTree")
+  catalogMasterProduct   CatalogMasterProduct? @relation(fields: [catalogMasterProductId], references: [id])
+}
+
+model CatalogTagGroup {
+  id          String       @id @default(uuid()) @db.Uuid
+  companyId   String       @db.Uuid
+  tinyGroupId BigInt?
+  name        String
+  active      Boolean      @default(true)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(6)
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tags        CatalogTag[]
+}
+
+model CatalogTag {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @db.Uuid
+  catalogTagGroupId String?           @db.Uuid
+  tinyTagId         BigInt?
+  name              String
+  active            Boolean           @default(true)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  catalogTagGroup   CatalogTagGroup?  @relation(fields: [catalogTagGroupId], references: [id])
+  productTags       CatalogProductTag[]
+}
+
+model CatalogProductTag {
+  id                     String               @id @default(uuid()) @db.Uuid
+  catalogMasterProductId String?              @db.Uuid
+  catalogMasterVariantId String?              @db.Uuid
+  catalogTagId           String               @db.Uuid
+  createdAt              DateTime             @default(now()) @db.Timestamptz(6)
+  catalogMasterProduct   CatalogMasterProduct? @relation(fields: [catalogMasterProductId], references: [id])
+  catalogMasterVariant   CatalogMasterVariant? @relation(fields: [catalogMasterVariantId], references: [id])
+  catalogTag             CatalogTag           @relation(fields: [catalogTagId], references: [id], onDelete: Cascade)
+}
+
+model CatalogMasterImage {
+  id                     String               @id @default(uuid()) @db.Uuid
+  catalogMasterProductId String?              @db.Uuid
+  catalogMasterVariantId String?              @db.Uuid
+  companyId              String?              @db.Uuid
+  imageType              String?
+  url                    String
+  isPrimary              Boolean              @default(false)
+  sortOrder              Int?
+  createdAt              DateTime             @default(now()) @db.Timestamptz(6)
+  catalogMasterProduct   CatalogMasterProduct? @relation(fields: [catalogMasterProductId], references: [id])
+  catalogMasterVariant   CatalogMasterVariant? @relation(fields: [catalogMasterVariantId], references: [id])
+  company                Company?             @relation(fields: [companyId], references: [id])
+}
+
+model CatalogMarketplaceListing {
+  id                     String               @id @default(uuid()) @db.Uuid
+  catalogMasterProductId String               @db.Uuid
+  companyId              String               @db.Uuid
+  marketplace            String
+  listingId              String?
+  listingTitle           String?
+  listingUrl             String?
+  status                 String?
+  price                  Decimal?             @db.Decimal(14, 2)
+  promotionalPrice       Decimal?             @db.Decimal(14, 2)
+  lastSyncAt             DateTime?            @db.Timestamptz(6)
+  rawPayload             Json?
+  catalogMasterProduct   CatalogMasterProduct @relation(fields: [catalogMasterProductId], references: [id], onDelete: Cascade)
+  company                Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model Contact {
+  id               String               @id @default(uuid()) @db.Uuid
+  companyId        String               @db.Uuid
+  tinyContactId    BigInt?
+  contactType      String?
+  name             String
+  legalName        String?
+  documentNumber   String?
+  email            String?
+  phone            String?
+  mobilePhone      String?
+  city             String?
+  state            String?
+  country          String?
+  active           Boolean              @default(true)
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
+  company          Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  primaryCustomers CustomerProfile[]    @relation("CustomerPrimaryContact")
+  customerLinks    CustomerCompanyLink[]
+  crmSubjects      CrmSubject[]
+  salesOrders      MultiSalesOrder[]
+}
+
+model CustomerProfile {
+  id               String               @id @default(uuid()) @db.Uuid
+  primaryContactId String?              @db.Uuid
+  name             String
+  email            String?
+  phone            String?
+  mobilePhone      String?
+  documentNumber   String?
+  salesContextAi   String?
+  createdAt        DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(6)
+  primaryContact   Contact?             @relation("CustomerPrimaryContact", fields: [primaryContactId], references: [id])
+  companyLinks     CustomerCompanyLink[]
+  crmSubjects      CrmSubject[]
+  salesOrders      MultiSalesOrder[]
+  accountsReceivable AccountReceivable[]
+  invoiceRecords   InvoiceRecord[]
+  freightQuotes    FreightQuote[]
+}
+
+model CustomerCompanyLink {
+  id                String           @id @default(uuid()) @db.Uuid
+  customerProfileId String           @db.Uuid
+  companyId         String           @db.Uuid
+  contactId         String?          @db.Uuid
+  isCrmEligible     Boolean          @default(false)
+  firstPurchaseAt   DateTime?        @db.Timestamptz(6)
+  lastPurchaseAt    DateTime?        @db.Timestamptz(6)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+  customerProfile   CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contact           Contact?         @relation(fields: [contactId], references: [id])
+
+  @@unique([customerProfileId, companyId])
+}
+
+model Vendor {
+  id          String    @id @default(uuid()) @db.Uuid
+  companyId   String    @db.Uuid
+  tinyVendorId BigInt?
+  name        String
+  email       String?
+  phone       String?
+  active      Boolean   @default(true)
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  crmSubjects CrmSubject[]
+}
+
+model CrmStage {
+  id          String       @id @default(uuid()) @db.Uuid
+  companyId   String       @db.Uuid
+  tinyStageId BigInt?
+  name        String
+  sortOrder   Int?
+  active      Boolean      @default(true)
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  subjects    CrmSubject[]
+}
+
+model CrmSubject {
+  id                String           @id @default(uuid()) @db.Uuid
+  companyId         String           @db.Uuid
+  customerProfileId String?          @db.Uuid
+  contactId         String?          @db.Uuid
+  vendorId          String?          @db.Uuid
+  tinyCrmSubjectId  BigInt?
+  crmStageId        String?          @db.Uuid
+  subject           String
+  status            String?
+  priority          String?
+  source            String?
+  summary           String?
+  crmContextAi      String?
+  createdAt         DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(6)
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerProfile   CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+  contact           Contact?         @relation(fields: [contactId], references: [id])
+  vendor            Vendor?          @relation(fields: [vendorId], references: [id])
+  crmStage          CrmStage?        @relation(fields: [crmStageId], references: [id])
+  actions           CrmAction[]
+}
+
+model CrmAction {
+  id           String     @id @default(uuid()) @db.Uuid
+  crmSubjectId String     @db.Uuid
+  tinyActionId BigInt?
+  actionType   String?
+  description  String
+  status       String?
+  dueAt        DateTime?  @db.Timestamptz(6)
+  completedAt  DateTime?  @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(6)
+  crmSubject   CrmSubject @relation(fields: [crmSubjectId], references: [id], onDelete: Cascade)
+}
+
+model MultiSalesOrder {
+  id                String                @id @default(uuid()) @db.Uuid
+  companyId         String                @db.Uuid
+  customerProfileId String?               @db.Uuid
+  contactId         String?               @db.Uuid
+  tinyOrderId       BigInt?
+  orderNumber       String
+  channel           String?
+  status            String?
+  totalAmount       Decimal?              @db.Decimal(14, 2)
+  discountAmount    Decimal?              @db.Decimal(14, 2)
+  shippingAmount    Decimal?              @db.Decimal(14, 2)
+  placedAt          DateTime?             @db.Timestamptz(6)
+  approvedAt        DateTime?             @db.Timestamptz(6)
+  orderContextAi    String?
+  rawPayload        Json?
+  createdAt         DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(6)
+  company           Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerProfile   CustomerProfile?      @relation(fields: [customerProfileId], references: [id])
+  contact           Contact?              @relation(fields: [contactId], references: [id])
+  items             MultiSalesOrderItem[]
+  statusHistory     MultiSalesOrderStatusHistory[]
+  markers           MultiSalesOrderMarker[]
+  accountsReceivable AccountReceivable[]
+  invoiceRecords    InvoiceRecord[]
+  shipments         Shipment[]
+  freightQuotes     FreightQuote[]
+  pickingSeparations PickingSeparation[]
+}
+
+model MultiSalesOrderItem {
+  id                     String               @id @default(uuid()) @db.Uuid
+  multiSalesOrderId      String               @db.Uuid
+  catalogMasterProductId String?              @db.Uuid
+  catalogMasterVariantId String?              @db.Uuid
+  sku                    String?
+  description            String
+  quantity               Decimal              @default(1) @db.Decimal(14, 2)
+  unitPrice              Decimal?             @db.Decimal(14, 2)
+  totalPrice             Decimal?             @db.Decimal(14, 2)
+  rawPayload             Json?
+  multiSalesOrder        MultiSalesOrder      @relation(fields: [multiSalesOrderId], references: [id], onDelete: Cascade)
+  catalogMasterProduct   CatalogMasterProduct? @relation(fields: [catalogMasterProductId], references: [id])
+  catalogMasterVariant   CatalogMasterVariant? @relation(fields: [catalogMasterVariantId], references: [id])
+}
+
+model MultiSalesOrderStatusHistory {
+  id                String          @id @default(uuid()) @db.Uuid
+  multiSalesOrderId String          @db.Uuid
+  fromStatus        String?
+  toStatus          String
+  changedAt         DateTime        @db.Timestamptz(6)
+  note              String?
+  multiSalesOrder   MultiSalesOrder @relation(fields: [multiSalesOrderId], references: [id], onDelete: Cascade)
+}
+
+model MultiSalesOrderMarker {
+  id                String          @id @default(uuid()) @db.Uuid
+  multiSalesOrderId String          @db.Uuid
+  marker            String
+  createdAt         DateTime        @default(now()) @db.Timestamptz(6)
+  multiSalesOrder   MultiSalesOrder @relation(fields: [multiSalesOrderId], references: [id], onDelete: Cascade)
+}
+
+model PaymentMethod {
+  id            String              @id @default(uuid()) @db.Uuid
+  companyId     String              @db.Uuid
+  tinyMethodId  BigInt?
+  name          String
+  active        Boolean             @default(true)
+  company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  receivables   AccountReceivable[]
+  settlements   AccountReceivableSettlement[]
+}
+
+model AccountReceivable {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @db.Uuid
+  customerProfileId String?           @db.Uuid
+  multiSalesOrderId String?           @db.Uuid
+  tinyReceivableId  BigInt?
+  documentNumber    String?
+  status            String?
+  amount            Decimal           @db.Decimal(14, 2)
+  balanceAmount     Decimal?          @db.Decimal(14, 2)
+  dueDate           DateTime?         @db.Date
+  issuedAt          DateTime?         @db.Timestamptz(6)
+  paidAt            DateTime?         @db.Timestamptz(6)
+  paymentMethodId   String?           @db.Uuid
+  financialContextAi String?
+  rawPayload        Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerProfile   CustomerProfile?  @relation(fields: [customerProfileId], references: [id])
+  multiSalesOrder   MultiSalesOrder?  @relation(fields: [multiSalesOrderId], references: [id])
+  paymentMethod     PaymentMethod?    @relation(fields: [paymentMethodId], references: [id])
+  settlements       AccountReceivableSettlement[]
+}
+
+model AccountReceivableSettlement {
+  id                  String            @id @default(uuid()) @db.Uuid
+  accountReceivableId String            @db.Uuid
+  amount              Decimal           @db.Decimal(14, 2)
+  settledAt           DateTime          @db.Timestamptz(6)
+  paymentMethodId     String?           @db.Uuid
+  note                String?
+  accountReceivable   AccountReceivable @relation(fields: [accountReceivableId], references: [id], onDelete: Cascade)
+  paymentMethod       PaymentMethod?    @relation(fields: [paymentMethodId], references: [id])
+}
+
+model InvoiceRecord {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @db.Uuid
+  multiSalesOrderId String?           @db.Uuid
+  customerProfileId String?           @db.Uuid
+  tinyInvoiceId     BigInt?
+  invoiceNumber     String?
+  series            String?
+  status            String?
+  issuedAt          DateTime?         @db.Timestamptz(6)
+  xmlUrl            String?
+  invoiceLink       String?
+  rawPayload        Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  multiSalesOrder   MultiSalesOrder?  @relation(fields: [multiSalesOrderId], references: [id])
+  customerProfile   CustomerProfile?  @relation(fields: [customerProfileId], references: [id])
+  markers           InvoiceMarker[]
+  shipments         Shipment[]
+}
+
+model InvoiceMarker {
+  id              String         @id @default(uuid()) @db.Uuid
+  invoiceRecordId String         @db.Uuid
+  marker          String
+  createdAt       DateTime       @default(now()) @db.Timestamptz(6)
+  invoiceRecord   InvoiceRecord  @relation(fields: [invoiceRecordId], references: [id], onDelete: Cascade)
+}
+
+model Shipment {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @db.Uuid
+  multiSalesOrderId String?           @db.Uuid
+  invoiceRecordId   String?           @db.Uuid
+  tinyShipmentId    BigInt?
+  status            String?
+  trackingCode      String?
+  shippingMethodId  String?           @db.Uuid
+  dispatchedAt      DateTime?         @db.Timestamptz(6)
+  deliveredAt       DateTime?         @db.Timestamptz(6)
+  logisticsContextAi String?
+  rawPayload        Json?
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  multiSalesOrder   MultiSalesOrder?  @relation(fields: [multiSalesOrderId], references: [id])
+  invoiceRecord     InvoiceRecord?    @relation(fields: [invoiceRecordId], references: [id])
+  shippingMethod    ShippingMethod?   @relation(fields: [shippingMethodId], references: [id])
+  trackingEvents    TrackingEvent[]
+}
+
+model ShipmentGrouping {
+  id            String    @id @default(uuid()) @db.Uuid
+  companyId     String    @db.Uuid
+  tinyGroupingId BigInt?
+  name          String?
+  status        String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model ShippingMethod {
+  id                 String      @id @default(uuid()) @db.Uuid
+  companyId          String      @db.Uuid
+  tinyShippingMethodId BigInt?
+  name               String
+  carrierName        String?
+  active             Boolean     @default(true)
+  company            Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  shipments          Shipment[]
+}
+
+model FreightQuote {
+  id                String           @id @default(uuid()) @db.Uuid
+  companyId         String           @db.Uuid
+  multiSalesOrderId String?          @db.Uuid
+  customerProfileId String?          @db.Uuid
+  destinationZipCode String?
+  carrierName       String?
+  serviceName       String?
+  price             Decimal?         @db.Decimal(14, 2)
+  deadlineDays      Int?
+  rawPayload        Json?
+  quotedAt          DateTime         @db.Timestamptz(6)
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  multiSalesOrder   MultiSalesOrder? @relation(fields: [multiSalesOrderId], references: [id])
+  customerProfile   CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+}
+
+model PickingSeparation {
+  id                String           @id @default(uuid()) @db.Uuid
+  companyId         String           @db.Uuid
+  multiSalesOrderId String?          @db.Uuid
+  tinySeparationId  BigInt?
+  status            String?
+  startedAt         DateTime?        @db.Timestamptz(6)
+  finishedAt        DateTime?        @db.Timestamptz(6)
+  rawPayload        Json?
+  company           Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  multiSalesOrder   MultiSalesOrder? @relation(fields: [multiSalesOrderId], references: [id])
+}
+
+model TrackingEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  shipmentId  String    @db.Uuid
+  eventType   String
+  description String?
+  eventAt     DateTime  @db.Timestamptz(6)
+  rawPayload  Json?
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+}
+
+model IntegrationSyncRun {
+  id               String                 @id @default(uuid()) @db.Uuid
+  companyId        String?                @db.Uuid
+  domain           String
+  resourceType     String
+  triggerType      String
+  status           IntegrationSyncStatus  @default(PENDING)
+  startedAt        DateTime               @default(now()) @db.Timestamptz(6)
+  finishedAt       DateTime?              @db.Timestamptz(6)
+  recordsProcessed Int                    @default(0)
+  errorMessage     String?
+  company          Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  syncErrors       IntegrationSyncError[]
+}
+
+model IntegrationSyncError {
+  id               String              @id @default(uuid()) @db.Uuid
+  integrationSyncRunId String?         @db.Uuid
+  companyId        String?             @db.Uuid
+  domain           String
+  resourceType     String
+  externalId       String?
+  message          String
+  payload          Json?
+  createdAt        DateTime            @default(now()) @db.Timestamptz(6)
+  integrationSyncRun IntegrationSyncRun? @relation(fields: [integrationSyncRunId], references: [id], onDelete: SetNull)
+  company          Company?            @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}
+
+model IntegrationRawPayload {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String?   @db.Uuid
+  provider     String
+  domain       String
+  resourceType String
+  externalId   String?
+  payload      Json
+  receivedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  company      Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}
+
+model MultiTinyWebhookLog {
+  id           String    @id @default(uuid()) @db.Uuid
+  companyId    String?   @db.Uuid
+  eventType    String
+  status       String
+  externalId   String?
+  payload      Json
+  errorMessage String?
+  receivedAt   DateTime  @default(now()) @db.Timestamptz(6)
+  processedAt  DateTime? @db.Timestamptz(6)
+  company      Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}
+
+model IntegrationReconcileJob {
+  id           String                 @id @default(uuid()) @db.Uuid
+  companyId    String?                @db.Uuid
+  domain       String
+  resourceType String
+  status       IntegrationSyncStatus  @default(PENDING)
+  startedAt    DateTime               @default(now()) @db.Timestamptz(6)
+  finishedAt   DateTime?              @db.Timestamptz(6)
+  note         String?
+  company      Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}
