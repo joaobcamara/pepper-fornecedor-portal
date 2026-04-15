@@ -39,6 +39,12 @@ export function LoginForm() {
     window.location.assign(payload.redirectTo);
   }
 
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    void handleSubmit(formData);
+  }
+
   return (
     <div className="grid min-h-screen place-items-center bg-pepper-glow px-5 py-8">
       <div className="w-full max-w-md rounded-[2rem] border border-white/70 bg-white/85 p-6 shadow-panel backdrop-blur lg:p-8">
@@ -54,12 +60,7 @@ export function LoginForm() {
           </p>
         </div>
 
-        <form
-          action={(formData) => {
-            void handleSubmit(formData);
-          }}
-          className="mt-8 space-y-4"
-        >
+        <form onSubmit={onSubmit} className="mt-8 space-y-4">
           <label className="block">
             <span className="mb-2 block text-sm font-semibold text-slate-700">Usuário</span>
             <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
