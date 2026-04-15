@@ -27,6 +27,7 @@ async function main() {
   await prisma.auditLog.deleteMany();
   await prisma.tinyImportItem.deleteMany();
   await prisma.tinyImportBatch.deleteMany();
+  await prisma.salesOrderStatusHistory.deleteMany();
   await prisma.salesOrderItem.deleteMany();
   await prisma.salesOrder.deleteMany();
   await prisma.customer.deleteMany();
