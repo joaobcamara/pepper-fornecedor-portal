@@ -1,20 +1,20 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { LockKeyhole, UserRound } from "lucide-react";
 import { LogoMark } from "@/components/logo-mark";
 
 export function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nextPath = searchParams.get("next") ?? "/produtos";
   const isAdminIntent = nextPath.startsWith("/admin");
 
   async function handleSubmit(formData: FormData) {
     setError(null);
+    setIsPending(true);
 
     const response = await fetch("/api/auth/login", {
       method: "POST",
@@ -31,11 +31,12 @@ export function LoginForm() {
     if (!response.ok) {
       const payload = (await response.json()) as { error?: string };
       setError(payload.error ?? "Não foi possível entrar.");
+      setIsPending(false);
       return;
     }
 
     const payload = (await response.json()) as { redirectTo: string };
-    startTransition(() => router.push(payload.redirectTo));
+    window.location.assign(payload.redirectTo);
   }
 
   return (
