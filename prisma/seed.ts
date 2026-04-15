@@ -9,7 +9,27 @@ function hashPassword(value: string) {
 }
 
 async function main() {
+  await prisma.pepperIaMessage.deleteMany();
+  await prisma.pepperIaThread.deleteMany();
+  await prisma.suggestionValidationDraft.deleteMany();
+  await prisma.supplierFinancialStatusHistory.deleteMany();
+  await prisma.supplierFinancialAttachment.deleteMany();
+  await prisma.supplierFinancialEntry.deleteMany();
+  await prisma.supplierOrderWorkflowHistory.deleteMany();
+  await prisma.supplierOrderStatusHistory.deleteMany();
+  await prisma.supplierOrderAttachment.deleteMany();
+  await prisma.supplierOrderItem.deleteMany();
+  await prisma.supplierOrder.deleteMany();
+  await prisma.replenishmentRequestItem.deleteMany();
+  await prisma.replenishmentRequest.deleteMany();
+  await prisma.productSuggestionStatusHistory.deleteMany();
+  await prisma.catalogOnboardingItem.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.tinyImportItem.deleteMany();
+  await prisma.tinyImportBatch.deleteMany();
+  await prisma.salesOrderItem.deleteMany();
+  await prisma.salesOrder.deleteMany();
+  await prisma.customer.deleteMany();
   await prisma.messageAttachment.deleteMany();
   await prisma.message.deleteMany();
   await prisma.conversation.deleteMany();
@@ -18,6 +38,19 @@ async function main() {
   await prisma.productSuggestionColor.deleteMany();
   await prisma.productSuggestion.deleteMany();
   await prisma.syncRun.deleteMany();
+  await prisma.tinyWebhookLog.deleteMany();
+  await prisma.supplierSalesMetricDaily.deleteMany();
+  await prisma.productSalesMetricDaily.deleteMany();
+  await prisma.variantSalesMetricDaily.deleteMany();
+  await prisma.catalogMarketplaceListing.deleteMany();
+  await prisma.catalogPrice.deleteMany();
+  await prisma.catalogInventory.deleteMany();
+  await prisma.catalogTinyMapping.deleteMany();
+  await prisma.catalogAttribute.deleteMany();
+  await prisma.catalogImage.deleteMany();
+  await prisma.catalogProductSupplier.deleteMany();
+  await prisma.catalogVariant.deleteMany();
+  await prisma.catalogProduct.deleteMany();
   await prisma.inventorySnapshot.deleteMany();
   await prisma.productSupplier.deleteMany();
   await prisma.product.deleteMany();
