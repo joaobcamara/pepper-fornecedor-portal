@@ -37,13 +37,15 @@ Configurar manualmente no painel do serviço:
 - `SUPABASE_STORAGE_BUCKET`
 - `SESSION_SECRET`
 - `TINY_API_TOKEN`
+- `TINY_SHOWLOOK_API_TOKEN`
+- `TINY_ONSHOP_API_TOKEN`
 - `TINY_API_BASE_URL`
 - `TINY_WEBHOOK_SECRET`
 - `CRON_SECRET`
 - `CATALOG_QUEUE_TOKEN`
 - `ALLOW_DEMO_AUTH=false`
 - `OPENAI_API_KEY` se a validacao assistida ficar ativa
-- `OPENAI_SUGGESTION_MODEL=gpt-4o-mini`
+- `OPENAI_SUGGESTION_MODEL=gpt-5-mini`
 
 ## Bucket no Supabase
 

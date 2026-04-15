@@ -36,10 +36,13 @@ Copy-Item .env.example .env
 - `SUPABASE_STORAGE_BUCKET`
 - `SESSION_SECRET`
 - `TINY_API_TOKEN`
+- `TINY_SHOWLOOK_API_TOKEN`
+- `TINY_ONSHOP_API_TOKEN`
 - `TINY_API_BASE_URL`
 - `CATALOG_QUEUE_TOKEN`
 - `ALLOW_DEMO_AUTH=false`
 - `OPENAI_API_KEY` se quiser usar validacao assistida
+- `OPENAI_SUGGESTION_MODEL=gpt-5-mini` para manter a Pepper IA e a validacao assistida no modelo padrao do projeto
 
 4. Gere o Prisma Client:
 
@@ -104,6 +107,7 @@ npm.cmd run dev
 - sincronizacao de estoque
 - webhooks de estoque
 - webhooks de vendas
+- importacao agregada de vendas de Pepper + Show Look + On Shop para as metricas do fornecedor
 - reconciliacao manual/assistida
 
 ### Supabase

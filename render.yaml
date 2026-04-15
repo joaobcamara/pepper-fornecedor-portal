@@ -18,4 +18,4 @@ services:
       - key: SUPABASE_STORAGE_BUCKET
         value: portal-assets
       - key: OPENAI_SUGGESTION_MODEL
-        value: gpt-4o-mini
+        value: gpt-5-mini

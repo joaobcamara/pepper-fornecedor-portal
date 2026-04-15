@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { AdminSyncCenter } from "@/components/admin-sync-center";
+import { AdminSyncCenterV2 as AdminSyncCenter } from "@/components/admin-sync-center-v2";
 import { AdminShellV2 as AdminShell } from "@/components/admin-shell-v2";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";

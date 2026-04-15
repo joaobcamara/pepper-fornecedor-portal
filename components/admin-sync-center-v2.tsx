@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCcw, Webhook } from "lucide-react";
+
 import { cn } from "@/lib/cn";
 
 type SyncRunRow = {
@@ -36,7 +37,7 @@ type SyncSummary = {
   lastWebhookAt: string | null;
 };
 
-export function AdminSyncCenter({
+export function AdminSyncCenterV2({
   summary,
   syncRuns,
   webhookLogs
@@ -51,7 +52,7 @@ export function AdminSyncCenter({
   const [activeAction, setActiveAction] = useState<"inventory" | "sales" | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  async function reconcileNow() {
+  async function reconcileInventoryNow() {
     setFeedback(null);
     setError(null);
 
@@ -86,12 +87,12 @@ export function AdminSyncCenter({
     }
 
     setFeedback(
-      `Reconciliacao ${payload.status === "partial" ? "parcial" : "concluida"}: ${payload.updated ?? 0} variacoes atualizadas, ${payload.stale ?? 0} com fallback, ${payload.checked ?? 0} verificadas.`
+      `Reconciliacao ${payload.status === "partial" ? "parcial" : "concluida"}: ${payload.updated ?? 0} variacoes atualizadas, ${payload.stale ?? 0} com fallback e ${payload.checked ?? 0} variacoes verificadas.`
     );
     router.refresh();
   }
 
-  async function reconcileSalesNow() {
+  async function importSalesNow() {
     setFeedback(null);
     setError(null);
 
@@ -115,6 +116,11 @@ export function AdminSyncCenter({
       failed?: number;
       checked?: number;
       days?: number;
+      processedByAccount?: Array<{
+        label: string;
+        processed: number;
+        failed: number;
+      }>;
     };
 
     if (!response.ok) {
@@ -127,8 +133,15 @@ export function AdminSyncCenter({
       return;
     }
 
+    const accountSummary =
+      payload.processedByAccount && payload.processedByAccount.length > 0
+        ? ` (${payload.processedByAccount
+            .map((account) => `${account.label}: ${account.processed} ok / ${account.failed} falhas`)
+            .join(" · ")})`
+        : "";
+
     setFeedback(
-      `Importacao de vendas ${payload.status === "partial" ? "parcial" : "concluida"}: ${payload.processed ?? 0} pedidos processados, ${payload.failed ?? 0} falharam e ${payload.checked ?? 0} pedidos foram revisados nos ultimos ${payload.days ?? 30} dias.`
+      `Importacao de vendas ${payload.status === "partial" ? "parcial" : "concluida"}: ${payload.processed ?? 0} pedidos processados, ${payload.failed ?? 0} falharam e ${payload.checked ?? 0} pedidos foram revisados nos ultimos ${payload.days ?? 30} dias.${accountSummary}`
     );
     router.refresh();
   }
@@ -149,15 +162,17 @@ export function AdminSyncCenter({
               <RefreshCcw className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-slate-900">Reconciliação manual</h2>
-              <p className="text-sm text-slate-500">Força nova leitura no Tiny para corrigir divergências do catálogo.</p>
+              <h2 className="text-xl font-semibold text-slate-900">Sincronizacao manual</h2>
+              <p className="text-sm text-slate-500">
+                Corrija divergencias de estoque e puxe o historico real de pedidos de Pepper, Show Look e On Shop.
+              </p>
             </div>
           </div>
 
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <InfoBox label="Runs completos" value={summary.completedRuns.toString()} />
             <InfoBox label="Runs parciais" value={summary.partialRuns.toString()} />
-            <InfoBox label="Último webhook" value={summary.lastWebhookAt ?? "Sem registro"} />
+            <InfoBox label="Ultimo webhook" value={summary.lastWebhookAt ?? "Sem registro"} />
             <InfoBox label="Erros recentes" value={summary.webhookErrors.toString()} />
           </div>
 
@@ -171,14 +186,43 @@ export function AdminSyncCenter({
             <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
           ) : null}
 
-          <button
-            type="button"
-            onClick={() => startTransition(() => void reconcileNow())}
-            className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
-          >
-            {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            {isPending ? "Reconciliando..." : "Executar reconciliação agora"}
-          </button>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() =>
+                startTransition(() => {
+                  setActiveAction("inventory");
+                  void reconcileInventoryNow().finally(() => setActiveAction(null));
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
+            >
+              {isPending && activeAction === "inventory" ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              {isPending && activeAction === "inventory" ? "Reconciliando..." : "Executar reconciliacao de estoque"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                startTransition(() => {
+                  setActiveAction("sales");
+                  void importSalesNow().finally(() => setActiveAction(null));
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-2xl border border-[#f0d4c2] bg-[#fff8f3] px-5 py-3 text-sm font-semibold text-[#a94b25] shadow-soft"
+            >
+              {isPending && activeAction === "sales" ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="h-4 w-4" />
+              )}
+              {isPending && activeAction === "sales" ? "Importando vendas..." : "Importar vendas 30 dias"}
+            </button>
+          </div>
         </section>
 
         <section className="rounded-[2rem] border border-[#f0d4c2] bg-[#fff8f3] p-6 shadow-soft">
@@ -188,15 +232,17 @@ export function AdminSyncCenter({
             </div>
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Leitura operacional</h2>
-              <p className="text-sm text-slate-500">O Tiny alimenta webhooks e o Supabase serve como camada confiável de leitura.</p>
+              <p className="text-sm text-slate-500">
+                O Tiny segue como origem operacional, e o Supabase continua como a camada confiavel de leitura.
+              </p>
             </div>
           </div>
 
           <ul className="mt-5 space-y-3 text-sm leading-6 text-slate-600">
-            <li>Webhook de estoque atualiza o saldo multiempresa da variação.</li>
-            <li>Webhook de vendas atualiza cliente, pedido, item e métricas diárias.</li>
-            <li>A reconciliação existe como rede de segurança para manter consistência.</li>
-            <li>Os dashboards passam a ler o Supabase, não o Tiny diretamente.</li>
+            <li>Webhook de estoque atualiza o saldo multiempresa de cada variacao.</li>
+            <li>Webhook de vendas atualiza cliente, pedido, itens e metricas diarias.</li>
+            <li>Importacao manual de 30 dias soma Pepper, Show Look e On Shop para o giro compartilhado do deposito.</li>
+            <li>A reconciliacao continua como rede de seguranca para manter consistencia.</li>
           </ul>
         </section>
       </section>
@@ -206,9 +252,11 @@ export function AdminSyncCenter({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Runs recentes</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Histórico dos disparos de sincronização e reconciliação.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Historico dos disparos de sincronizacao e das importacoes operacionais.
+              </p>
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Operação</span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Operacao</span>
           </div>
 
           <div className="mt-5 space-y-3">
@@ -235,7 +283,7 @@ export function AdminSyncCenter({
                 </div>
               ))
             ) : (
-              <EmptyState label="Nenhuma sincronização registrada ainda." />
+              <EmptyState label="Nenhuma sincronizacao registrada ainda." />
             )}
           </div>
         </section>
@@ -244,7 +292,9 @@ export function AdminSyncCenter({
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold text-slate-900">Webhooks recentes</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">Entradas do Tiny processadas pelo sistema com status e rastreio.</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Entradas do Tiny processadas pelo sistema com status e rastreio.
+              </p>
             </div>
             <span className="inline-flex items-center gap-2 rounded-full bg-[#fff1e7] px-3 py-1 text-xs font-semibold text-[#a94b25]">
               <Webhook className="h-3.5 w-3.5" />
@@ -259,7 +309,8 @@ export function AdminSyncCenter({
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-slate-900">
-                        {log.webhookType} {log.eventType ? `· ${log.eventType}` : ""}
+                        {log.webhookType}
+                        {log.eventType ? ` · ${log.eventType}` : ""}
                       </p>
                       <p className="text-xs text-slate-500">
                         {log.sku ? `${log.sku} · ` : ""}

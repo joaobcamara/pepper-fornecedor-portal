@@ -4,7 +4,18 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { buildCustomerAiPackage, buildOrderContextAi, buildSalesItemContextAi } from "@/lib/sales-ai";
 import { normalizeSku } from "@/lib/sku";
-import { getTinyContactById, getTinyOrderById, toNumberValue, toStringValue, unwrapTinyItem } from "@/lib/tiny";
+import {
+  getConfiguredTinyAccounts,
+  getTinyAccountLabel,
+  type TinyAccountKey,
+  getTinyContactById,
+  getTinyOrderById,
+  isTinyConfigured,
+  searchTinyOrdersByDateRange,
+  toNumberValue,
+  toStringValue,
+  unwrapTinyItem
+} from "@/lib/tiny";
 
 const salesWebhookSchema = z.object({
   tipo: z.string().optional(),
@@ -31,15 +42,40 @@ function startOfDay(date: Date) {
   return day;
 }
 
+function startOfNextDay(date: Date) {
+  const day = startOfDay(date);
+  day.setDate(day.getDate() + 1);
+  return day;
+}
+
 function parseTinyDate(value?: string | null) {
   if (!value) {
     return null;
   }
 
   const normalized = value.trim();
+  const brDateMatch = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (brDateMatch) {
+    const [, day, month, year, hour = "00", minute = "00", second = "00"] = brDateMatch;
+    const parsed = new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    );
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
   const isoLike = normalized.includes("T") ? normalized : normalized.replace(" ", "T");
   const parsed = new Date(isoLike);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildScopedTinyId(accountKey: TinyAccountKey, value?: string | null) {
+  const normalized = toStringValue(value);
+  return normalized ? `${accountKey}:${normalized}` : null;
 }
 
 function normalizeOrderStatus(value?: string | null): SalesOrderStatus {
@@ -70,19 +106,24 @@ function extractArray(record: Record<string, unknown>, keys: string[]) {
   return [];
 }
 
-async function upsertCustomerFromTiny(order: Record<string, unknown>, rawContactId?: string | null) {
+async function upsertCustomerFromTiny(
+  order: Record<string, unknown>,
+  accountKey: TinyAccountKey,
+  rawContactId?: string | null
+) {
   const orderContact = unwrapTinyItem(order.cliente ?? order.contato ?? {});
-  const tinyContactId =
+  const rawTinyContactId =
     rawContactId ??
     toStringValue(orderContact.id) ??
     toStringValue(order.idContato) ??
     toStringValue(order.id_contato);
+  const tinyContactId = buildScopedTinyId(accountKey, rawTinyContactId);
 
   let contact = orderContact;
 
-  if (tinyContactId) {
+  if (rawTinyContactId) {
     try {
-      const fetched = await getTinyContactById(tinyContactId);
+      const fetched = await getTinyContactById(rawTinyContactId, accountKey);
       if (Object.keys(fetched).length > 0) {
         contact = fetched;
       }
@@ -178,107 +219,316 @@ async function resolveCatalogVariantBySku(sku?: string | null) {
   return catalogVariant;
 }
 
-async function persistDailyMetrics(params: {
+type MetricAccumulator = {
   date: Date;
-  catalogVariantId: string;
-  catalogProductId: string;
-  supplierIds: string[];
   unitsSold: number;
   grossRevenue: number;
-  orderDate: Date | null;
-}) {
-  const metricDate = startOfDay(params.date);
+  orderIds: Set<string>;
+  lastOrderAt: Date | null;
+};
 
-  await prisma.variantSalesMetricDaily.upsert({
-    where: {
-      date_variantId: {
-        date: metricDate,
-        variantId: params.catalogVariantId
-      }
-    },
-    update: {
-      unitsSold: { increment: params.unitsSold },
-      grossRevenue: { increment: params.grossRevenue },
-      orderCount: { increment: 1 },
-      lastOrderAt: params.orderDate ?? undefined,
-      productId: params.catalogProductId,
-      supplierId: params.supplierIds[0] ?? null
-    },
-    create: {
-      date: metricDate,
-      variantId: params.catalogVariantId,
-      productId: params.catalogProductId,
-      supplierId: params.supplierIds[0] ?? null,
-      unitsSold: params.unitsSold,
-      grossRevenue: params.grossRevenue,
-      orderCount: 1,
-      lastOrderAt: params.orderDate ?? undefined
-    }
-  });
+async function rebuildSalesMetricsForDates(dates: Array<Date | null | undefined>) {
+  const metricDates = Array.from(
+    new Set(
+      dates
+        .filter((value): value is Date => Boolean(value))
+        .map((value) => startOfDay(value).getTime())
+    )
+  ).map((time) => new Date(time));
 
-  await prisma.productSalesMetricDaily.upsert({
-    where: {
-      date_catalogProductId: {
-        date: metricDate,
-        catalogProductId: params.catalogProductId
-      }
-    },
-    update: {
-      unitsSold: { increment: params.unitsSold },
-      grossRevenue: { increment: params.grossRevenue },
-      orderCount: { increment: 1 },
-      lastOrderAt: params.orderDate ?? undefined,
-      supplierId: params.supplierIds[0] ?? null
-    },
-    create: {
-      date: metricDate,
-      catalogProductId: params.catalogProductId,
-      supplierId: params.supplierIds[0] ?? null,
-      unitsSold: params.unitsSold,
-      grossRevenue: params.grossRevenue,
-      orderCount: 1,
-      lastOrderAt: params.orderDate ?? undefined
-    }
-  });
-
-  for (const supplierId of params.supplierIds) {
-    await prisma.supplierSalesMetricDaily.upsert({
-      where: {
-        date_supplierId: {
-          date: metricDate,
-          supplierId
-        }
-      },
-      update: {
-        unitsSold: { increment: params.unitsSold },
-        grossRevenue: { increment: params.grossRevenue },
-        orderCount: { increment: 1 },
-        lastOrderAt: params.orderDate ?? undefined
-      },
-      create: {
-        date: metricDate,
-        supplierId,
-        unitsSold: params.unitsSold,
-        grossRevenue: params.grossRevenue,
-        orderCount: 1,
-        lastOrderAt: params.orderDate ?? undefined
-      }
-    });
+  if (metricDates.length === 0) {
+    return;
   }
+
+  await prisma.$transaction([
+    prisma.variantSalesMetricDaily.deleteMany({
+      where: {
+        date: {
+          in: metricDates
+        }
+      }
+    }),
+    prisma.productSalesMetricDaily.deleteMany({
+      where: {
+        date: {
+          in: metricDates
+        }
+      }
+    }),
+    prisma.supplierSalesMetricDaily.deleteMany({
+      where: {
+        date: {
+          in: metricDates
+        }
+      }
+    })
+  ]);
+
+  const minDate = metricDates.reduce((earliest, current) => (current < earliest ? current : earliest), metricDates[0]);
+  const maxDate = metricDates.reduce((latest, current) => (current > latest ? current : latest), metricDates[0]);
+  const maxExclusive = startOfNextDay(maxDate);
+
+  const orders = await prisma.salesOrder.findMany({
+    where: {
+      orderDate: {
+        gte: minDate,
+        lt: maxExclusive
+      },
+      status: {
+        not: SalesOrderStatus.CANCELED
+      }
+    },
+    select: {
+      id: true,
+      orderDate: true,
+      items: {
+        select: {
+          quantity: true,
+          unitPrice: true,
+          totalPrice: true,
+          variantId: true
+        }
+      }
+    }
+  });
+
+  const variantIds = Array.from(
+    new Set(
+      orders.flatMap((order) => order.items.map((item) => item.variantId).filter(Boolean))
+    )
+  ) as string[];
+
+  if (variantIds.length === 0) {
+    return;
+  }
+
+  const variants = await prisma.catalogVariant.findMany({
+    where: {
+      id: {
+        in: variantIds
+      }
+    },
+    select: {
+      id: true,
+      catalogProductId: true,
+      catalogProduct: {
+        select: {
+          supplierLinks: {
+            where: {
+              active: true
+            },
+            select: {
+              supplierId: true
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const variantMap = new Map(
+    variants.map((variant) => [
+      variant.id,
+      {
+        catalogProductId: variant.catalogProductId,
+        supplierIds: variant.catalogProduct.supplierLinks.map((link) => link.supplierId)
+      }
+    ])
+  );
+
+  const variantMetrics = new Map<
+    string,
+    MetricAccumulator & {
+      variantId: string;
+      productId: string;
+      supplierId: string | null;
+    }
+  >();
+  const productMetrics = new Map<
+    string,
+    MetricAccumulator & {
+      catalogProductId: string;
+      supplierId: string | null;
+    }
+  >();
+  const supplierMetrics = new Map<
+    string,
+    MetricAccumulator & {
+      supplierId: string;
+    }
+  >();
+
+  for (const order of orders) {
+    if (!order.orderDate) {
+      continue;
+    }
+
+    const metricDate = startOfDay(order.orderDate);
+
+    for (const item of order.items) {
+      if (!item.variantId) {
+        continue;
+      }
+
+      const variant = variantMap.get(item.variantId);
+      if (!variant) {
+        continue;
+      }
+
+      const grossRevenue = item.totalPrice ?? (item.unitPrice ?? 0) * item.quantity;
+      const variantKey = `${metricDate.toISOString()}::${item.variantId}`;
+      const currentVariantMetric =
+        variantMetrics.get(variantKey) ??
+        ({
+          variantId: item.variantId,
+          productId: variant.catalogProductId,
+          supplierId: variant.supplierIds[0] ?? null,
+          date: metricDate,
+          unitsSold: 0,
+          grossRevenue: 0,
+          orderIds: new Set<string>(),
+          lastOrderAt: null
+        } satisfies MetricAccumulator & {
+          variantId: string;
+          productId: string;
+          supplierId: string | null;
+        });
+
+      currentVariantMetric.unitsSold += item.quantity;
+      currentVariantMetric.grossRevenue += grossRevenue;
+      currentVariantMetric.orderIds.add(order.id);
+      if (!currentVariantMetric.lastOrderAt || order.orderDate > currentVariantMetric.lastOrderAt) {
+        currentVariantMetric.lastOrderAt = order.orderDate;
+      }
+      variantMetrics.set(variantKey, currentVariantMetric);
+
+      const productKey = `${metricDate.toISOString()}::${variant.catalogProductId}`;
+      const currentProductMetric =
+        productMetrics.get(productKey) ??
+        ({
+          catalogProductId: variant.catalogProductId,
+          supplierId: variant.supplierIds[0] ?? null,
+          date: metricDate,
+          unitsSold: 0,
+          grossRevenue: 0,
+          orderIds: new Set<string>(),
+          lastOrderAt: null
+        } satisfies MetricAccumulator & {
+          catalogProductId: string;
+          supplierId: string | null;
+        });
+
+      currentProductMetric.unitsSold += item.quantity;
+      currentProductMetric.grossRevenue += grossRevenue;
+      currentProductMetric.orderIds.add(order.id);
+      if (!currentProductMetric.lastOrderAt || order.orderDate > currentProductMetric.lastOrderAt) {
+        currentProductMetric.lastOrderAt = order.orderDate;
+      }
+      productMetrics.set(productKey, currentProductMetric);
+
+      for (const supplierId of variant.supplierIds) {
+        const supplierKey = `${metricDate.toISOString()}::${supplierId}`;
+        const currentSupplierMetric =
+          supplierMetrics.get(supplierKey) ??
+          ({
+            supplierId,
+            date: metricDate,
+            unitsSold: 0,
+            grossRevenue: 0,
+            orderIds: new Set<string>(),
+            lastOrderAt: null
+          } satisfies MetricAccumulator & { supplierId: string });
+
+        currentSupplierMetric.unitsSold += item.quantity;
+        currentSupplierMetric.grossRevenue += grossRevenue;
+        currentSupplierMetric.orderIds.add(order.id);
+        if (!currentSupplierMetric.lastOrderAt || order.orderDate > currentSupplierMetric.lastOrderAt) {
+          currentSupplierMetric.lastOrderAt = order.orderDate;
+        }
+        supplierMetrics.set(supplierKey, currentSupplierMetric);
+      }
+    }
+  }
+
+  await prisma.$transaction([
+    prisma.variantSalesMetricDaily.createMany({
+      data: Array.from(variantMetrics.values()).map((metric) => ({
+        date: metric.date,
+        variantId: metric.variantId,
+        productId: metric.productId,
+        supplierId: metric.supplierId,
+        unitsSold: metric.unitsSold,
+        grossRevenue: metric.grossRevenue,
+        orderCount: metric.orderIds.size,
+        lastOrderAt: metric.lastOrderAt ?? undefined
+      }))
+    }),
+    prisma.productSalesMetricDaily.createMany({
+      data: Array.from(productMetrics.values()).map((metric) => ({
+        date: metric.date,
+        catalogProductId: metric.catalogProductId,
+        supplierId: metric.supplierId,
+        unitsSold: metric.unitsSold,
+        grossRevenue: metric.grossRevenue,
+        orderCount: metric.orderIds.size,
+        lastOrderAt: metric.lastOrderAt ?? undefined
+      }))
+    }),
+    prisma.supplierSalesMetricDaily.createMany({
+      data: Array.from(supplierMetrics.values()).map((metric) => ({
+        date: metric.date,
+        supplierId: metric.supplierId,
+        unitsSold: metric.unitsSold,
+        grossRevenue: metric.grossRevenue,
+        orderCount: metric.orderIds.size,
+        lastOrderAt: metric.lastOrderAt ?? undefined
+      }))
+    })
+  ]);
 }
 
 async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unknown, eventType: string) {
-  const tinyOrderId =
+  return persistSalesOrderFromAccount(order, rawPayload, eventType, "pepper");
+}
+
+async function persistSalesOrderFromAccount(
+  order: Record<string, unknown>,
+  rawPayload: unknown,
+  eventType: string,
+  accountKey: TinyAccountKey,
+  options?: {
+    skipMetricRebuild?: boolean;
+  }
+) {
+  const rawTinyOrderId =
     toStringValue(order.id) ??
     toStringValue(order.idPedido) ??
     toStringValue(order.id_pedido);
+  const tinyOrderId = buildScopedTinyId(accountKey, rawTinyOrderId);
 
   if (!tinyOrderId) {
     throw new Error("Pedido sem id Tiny.");
   }
 
+  const existingOrder = await prisma.salesOrder.findUnique({
+    where: {
+      tinyOrderId
+    },
+    select: {
+      id: true,
+      orderDate: true,
+      statusHistory: {
+        orderBy: {
+          changedAt: "desc"
+        },
+        take: 1
+      }
+    }
+  });
+
   const customer = await upsertCustomerFromTiny(
     order,
+    accountKey,
     toStringValue(order.idContato) ?? toStringValue(order.id_contato)
   );
 
@@ -288,6 +538,8 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
     parseTinyDate(toStringValue(order.data));
 
   const itemEntries = extractArray(order, ["itens", "itensPedido", "produtos"]);
+  const normalizedStatus = normalizeOrderStatus(toStringValue(order.situacao));
+  const statusLabel = toStringValue(order.situacao);
 
   const itemSummaries: string[] = [];
 
@@ -296,20 +548,35 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
     update: {
       tinyContactId: customer.tinyContactId,
       number: toStringValue(order.numero) ?? toStringValue(order.numeroPedido),
-      ecommerceNumber: toStringValue(order.numeroEcommerce),
+      ecommerceNumber:
+        toStringValue(order.numeroEcommerce) ??
+        toStringValue(order.numero_ecommerce) ??
+        toStringValue(order.numero_ordem_compra) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).numeroPedidoEcommerce),
       channel: toStringValue(order.canalVenda),
-      marketplace: toStringValue(order.nomeEcommerce) ?? toStringValue(order.ecommerce),
-      status: normalizeOrderStatus(toStringValue(order.situacao)),
-      statusLabel: toStringValue(order.situacao),
+      marketplace:
+        toStringValue(order.nomeEcommerce) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).nomeEcommerce) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).nome) ??
+        toStringValue(order.ecommerce) ??
+        getTinyAccountLabel(accountKey),
+      status: normalizedStatus,
+      statusLabel,
       orderDate,
-      expectedDate: parseTinyDate(toStringValue(order.dataPrevista)),
-      invoicedAt: parseTinyDate(toStringValue(order.dataFaturamento)),
-      shippedAt: parseTinyDate(toStringValue(order.dataExpedicao)),
-      deliveredAt: parseTinyDate(toStringValue(order.dataEntrega)),
-      canceledAt: parseTinyDate(toStringValue(order.dataCancelamento)),
-      totalAmount: toNumberValue(order.valorTotal) ?? toNumberValue(order.total),
-      shippingAmount: toNumberValue(order.valorFrete),
-      discountAmount: toNumberValue(order.desconto),
+      expectedDate: parseTinyDate(toStringValue(order.dataPrevista) ?? toStringValue(order.data_prevista)),
+      invoicedAt: parseTinyDate(toStringValue(order.dataFaturamento) ?? toStringValue(order.data_faturamento)),
+      shippedAt: parseTinyDate(
+        toStringValue(order.dataExpedicao) ?? toStringValue(order.data_envio) ?? toStringValue(order.dataEnvio)
+      ),
+      deliveredAt: parseTinyDate(toStringValue(order.dataEntrega) ?? toStringValue(order.data_entrega)),
+      canceledAt: parseTinyDate(toStringValue(order.dataCancelamento) ?? toStringValue(order.data_cancelamento)),
+      totalAmount:
+        toNumberValue(order.valorTotal) ??
+        toNumberValue(order.total) ??
+        toNumberValue(order.total_pedido) ??
+        toNumberValue(order.valor),
+      shippingAmount: toNumberValue(order.valorFrete) ?? toNumberValue(order.valor_frete),
+      discountAmount: toNumberValue(order.desconto) ?? toNumberValue(order.valor_desconto),
       customerId: customer.id,
       customerContextAi: customer.customerContextAi,
       rawPayload: JSON.stringify(order)
@@ -318,35 +585,56 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
       tinyOrderId,
       tinyContactId: customer.tinyContactId,
       number: toStringValue(order.numero) ?? toStringValue(order.numeroPedido),
-      ecommerceNumber: toStringValue(order.numeroEcommerce),
+      ecommerceNumber:
+        toStringValue(order.numeroEcommerce) ??
+        toStringValue(order.numero_ecommerce) ??
+        toStringValue(order.numero_ordem_compra) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).numeroPedidoEcommerce),
       channel: toStringValue(order.canalVenda),
-      marketplace: toStringValue(order.nomeEcommerce) ?? toStringValue(order.ecommerce),
-      status: normalizeOrderStatus(toStringValue(order.situacao)),
-      statusLabel: toStringValue(order.situacao),
+      marketplace:
+        toStringValue(order.nomeEcommerce) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).nomeEcommerce) ??
+        toStringValue(unwrapTinyItem(order.ecommerce).nome) ??
+        toStringValue(order.ecommerce) ??
+        getTinyAccountLabel(accountKey),
+      status: normalizedStatus,
+      statusLabel,
       orderDate,
-      expectedDate: parseTinyDate(toStringValue(order.dataPrevista)),
-      invoicedAt: parseTinyDate(toStringValue(order.dataFaturamento)),
-      shippedAt: parseTinyDate(toStringValue(order.dataExpedicao)),
-      deliveredAt: parseTinyDate(toStringValue(order.dataEntrega)),
-      canceledAt: parseTinyDate(toStringValue(order.dataCancelamento)),
-      totalAmount: toNumberValue(order.valorTotal) ?? toNumberValue(order.total),
-      shippingAmount: toNumberValue(order.valorFrete),
-      discountAmount: toNumberValue(order.desconto),
+      expectedDate: parseTinyDate(toStringValue(order.dataPrevista) ?? toStringValue(order.data_prevista)),
+      invoicedAt: parseTinyDate(toStringValue(order.dataFaturamento) ?? toStringValue(order.data_faturamento)),
+      shippedAt: parseTinyDate(
+        toStringValue(order.dataExpedicao) ?? toStringValue(order.data_envio) ?? toStringValue(order.dataEnvio)
+      ),
+      deliveredAt: parseTinyDate(toStringValue(order.dataEntrega) ?? toStringValue(order.data_entrega)),
+      canceledAt: parseTinyDate(toStringValue(order.dataCancelamento) ?? toStringValue(order.data_cancelamento)),
+      totalAmount:
+        toNumberValue(order.valorTotal) ??
+        toNumberValue(order.total) ??
+        toNumberValue(order.total_pedido) ??
+        toNumberValue(order.valor),
+      shippingAmount: toNumberValue(order.valorFrete) ?? toNumberValue(order.valor_frete),
+      discountAmount: toNumberValue(order.desconto) ?? toNumberValue(order.valor_desconto),
       customerId: customer.id,
       customerContextAi: customer.customerContextAi,
       rawPayload: JSON.stringify(order)
     }
   });
 
-  await prisma.salesOrderStatusHistory.create({
-    data: {
-      salesOrderId: salesOrder.id,
-      status: normalizeOrderStatus(toStringValue(order.situacao)),
-      statusLabel: toStringValue(order.situacao),
-      source: eventType,
-      rawPayload: JSON.stringify(rawPayload)
-    }
-  });
+  const latestStatusHistory = existingOrder?.statusHistory[0];
+  if (!latestStatusHistory || latestStatusHistory.status !== normalizedStatus || latestStatusHistory.statusLabel !== statusLabel) {
+    await prisma.salesOrderStatusHistory.create({
+      data: {
+        salesOrderId: salesOrder.id,
+        status: normalizedStatus,
+        statusLabel,
+        source: eventType,
+        rawPayload: JSON.stringify({
+          accountKey,
+          payload: rawPayload
+        })
+      }
+    });
+  }
 
   await prisma.salesOrderItem.deleteMany({
     where: { salesOrderId: salesOrder.id }
@@ -369,8 +657,6 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
     const catalogVariant = await resolveCatalogVariantBySku(sku);
     const productId = catalogVariant?.sourceProductId ?? null;
     const skuParent = catalogVariant?.catalogProduct.skuParent ?? null;
-    const supplierIds = catalogVariant?.catalogProduct.supplierLinks.map((link) => link.supplierId) ?? [];
-
     itemSummaries.push(`${productName} x${quantity}`);
 
     await prisma.salesOrderItem.create({
@@ -395,18 +681,6 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
         rawPayload: JSON.stringify(item)
       }
     });
-
-    if (catalogVariant && quantity > 0) {
-      await persistDailyMetrics({
-        date: orderDate ?? new Date(),
-        catalogVariantId: catalogVariant.id,
-        catalogProductId: catalogVariant.catalogProductId,
-        supplierIds,
-        unitsSold: quantity,
-        grossRevenue: totalPrice ?? 0,
-        orderDate
-      });
-    }
   }
 
   const orderContextAi = buildOrderContextAi({
@@ -426,9 +700,16 @@ async function persistSalesOrder(order: Record<string, unknown>, rawPayload: unk
     }
   });
 
+  if (!options?.skipMetricRebuild) {
+    await rebuildSalesMetricsForDates([existingOrder?.orderDate ?? null, orderDate]);
+  }
+
   return {
     salesOrderId: salesOrder.id,
     tinyOrderId,
+    rawTinyOrderId,
+    accountKey,
+    metricDates: [existingOrder?.orderDate ?? null, orderDate],
     itemCount: itemEntries.length,
     customerId: customer.id
   };
@@ -485,8 +766,8 @@ export async function handleTinySalesWebhook(rawPayload: unknown) {
     throw new Error("Webhook sem id de pedido.");
   }
 
-  const order = await getTinyOrderById(String(orderId));
-  const result = await persistSalesOrder(order, rawPayload, eventType);
+  const order = await getTinyOrderById(String(orderId), "pepper");
+  const result = await persistSalesOrderFromAccount(order, rawPayload, eventType, "pepper");
   const processedAt = new Date();
 
   await logSalesWebhook({
@@ -501,4 +782,163 @@ export async function handleTinySalesWebhook(rawPayload: unknown) {
     ok: true,
     ...result
   };
+}
+
+export async function reconcileTinySalesOrders(params: {
+  days?: number;
+  maxPages?: number;
+  maxOrders?: number;
+  requestedByUserId?: string | null;
+}) {
+  if (!isTinyConfigured()) {
+    return {
+      status: "skipped",
+      reason: "Tiny nao configurado."
+    };
+  }
+
+  const days = Math.min(Math.max(params.days ?? 30, 1), 180);
+  const maxPages = Math.min(Math.max(params.maxPages ?? 6, 1), 50);
+  const maxOrders = Math.min(Math.max(params.maxOrders ?? 200, 1), 2000);
+  const endDate = new Date();
+  const startDate = startOfDay(new Date());
+  startDate.setDate(startDate.getDate() - (days - 1));
+
+  const run = await prisma.syncRun.create({
+    data: {
+      triggerType: "sales_reconcile",
+      status: "processing",
+      requestedByUserId: params.requestedByUserId ?? null
+    }
+  });
+
+  let processed = 0;
+  let failed = 0;
+  let pagesChecked = 0;
+  let ordersFound = 0;
+  let totalPages = 1;
+  const seenOrderIds = new Set<string>();
+  const errorMessages: string[] = [];
+  const configuredAccounts = getConfiguredTinyAccounts();
+  const maxOrdersPerAccount = Math.max(1, Math.ceil(maxOrders / Math.max(configuredAccounts.length, 1)));
+  const processedByAccount: Array<{ accountKey: TinyAccountKey; label: string; processed: number; failed: number }> = [];
+  const touchedMetricDates: Array<Date | null> = [];
+
+  try {
+    for (const account of configuredAccounts) {
+      let accountProcessed = 0;
+      let accountFailed = 0;
+      totalPages = 1;
+
+      for (let page = 1; page <= totalPages && page <= maxPages && accountProcessed + accountFailed < maxOrdersPerAccount; page += 1) {
+        const result = await searchTinyOrdersByDateRange({
+          startDate,
+          endDate,
+          page,
+          accountKey: account.key
+        });
+
+        totalPages = result.totalPages;
+        pagesChecked += 1;
+        ordersFound += result.orders.length;
+
+        for (const orderRef of result.orders) {
+          const scopedOrderId = buildScopedTinyId(account.key, orderRef.id);
+          if (!scopedOrderId || seenOrderIds.has(scopedOrderId) || accountProcessed + accountFailed >= maxOrdersPerAccount) {
+            continue;
+          }
+
+          seenOrderIds.add(scopedOrderId);
+
+          try {
+            const order = await getTinyOrderById(orderRef.id, account.key);
+            const persisted = await persistSalesOrderFromAccount(
+              order,
+              {
+                source: "sales_reconcile",
+                page,
+                days,
+                accountKey: account.key,
+                tinyOrderId: orderRef.id
+              },
+              "sales_reconcile",
+              account.key,
+              {
+                skipMetricRebuild: true
+              }
+            );
+            processed += 1;
+            accountProcessed += 1;
+            touchedMetricDates.push(...persisted.metricDates);
+          } catch (error) {
+            failed += 1;
+            accountFailed += 1;
+            if (errorMessages.length < 5) {
+              errorMessages.push(
+                `${account.label} · ${orderRef.number ?? orderRef.id}: ${
+                  error instanceof Error ? error.message : "Falha ao importar pedido."
+                }`
+              );
+            }
+          }
+        }
+      }
+
+      processedByAccount.push({
+        accountKey: account.key,
+        label: account.label,
+        processed: accountProcessed,
+        failed: accountFailed
+      });
+    }
+
+    await rebuildSalesMetricsForDates(touchedMetricDates);
+
+    const status = failed > 0 ? (processed > 0 ? "partial" : "failed") : "completed";
+
+    await prisma.syncRun.update({
+      where: { id: run.id },
+      data: {
+        status,
+        finishedAt: new Date(),
+        errorMessage: errorMessages.length > 0 ? errorMessages.join(" | ") : null
+      }
+    });
+
+    return {
+      status,
+      days,
+      processed,
+      failed,
+      checked: seenOrderIds.size,
+      ordersFound,
+      pagesChecked,
+      totalPages,
+      processedByAccount
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao reconciliar vendas.";
+
+    await prisma.syncRun.update({
+      where: { id: run.id },
+      data: {
+        status: "failed",
+        finishedAt: new Date(),
+        errorMessage: message
+      }
+    });
+
+    return {
+      status: "failed",
+      days,
+      processed,
+      failed: failed + 1,
+      checked: seenOrderIds.size,
+      ordersFound,
+      pagesChecked,
+      totalPages,
+      reason: message,
+      processedByAccount
+    };
+  }
 }

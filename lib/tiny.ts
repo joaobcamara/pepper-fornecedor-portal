@@ -52,12 +52,62 @@ export type TinyInspectionResult = {
   suggestions: TinySearchCandidate[];
 };
 
-function getTinyToken() {
-  return process.env.TINY_API_TOKEN?.trim();
+export type TinyOrderSearchResult = {
+  id: string;
+  number: string | null;
+  ecommerceNumber: string | null;
+  statusLabel: string | null;
+  orderDate: string | null;
+  customerName: string | null;
+  totalAmount: number | null;
+  raw: Record<string, unknown>;
+};
+
+export type TinyOrderSearchPage = {
+  page: number;
+  totalPages: number;
+  orders: TinyOrderSearchResult[];
+};
+
+export type TinyAccountKey = "pepper" | "showlook" | "onshop";
+
+const TINY_ACCOUNT_CONFIG: Array<{
+  key: TinyAccountKey;
+  label: string;
+  tokenEnvKey: string;
+}> = [
+  {
+    key: "pepper",
+    label: "Pepper",
+    tokenEnvKey: "TINY_API_TOKEN"
+  },
+  {
+    key: "showlook",
+    label: "Show Look",
+    tokenEnvKey: "TINY_SHOWLOOK_API_TOKEN"
+  },
+  {
+    key: "onshop",
+    label: "On Shop",
+    tokenEnvKey: "TINY_ONSHOP_API_TOKEN"
+  }
+];
+
+export function getConfiguredTinyAccounts() {
+  return TINY_ACCOUNT_CONFIG.filter((account) => Boolean(process.env[account.tokenEnvKey]?.trim()));
+}
+
+export function getTinyAccountLabel(accountKey: TinyAccountKey) {
+  return TINY_ACCOUNT_CONFIG.find((account) => account.key === accountKey)?.label ?? accountKey;
+}
+
+function getTinyToken(accountKey: TinyAccountKey = "pepper") {
+  const config = TINY_ACCOUNT_CONFIG.find((account) => account.key === accountKey);
+  return config ? process.env[config.tokenEnvKey]?.trim() : undefined;
 }
 
 export function isTinyConfigured() {
-  return Boolean(getTinyToken());
+  return Boolean(getTinyToken("pepper"));
 }
 
 export function unwrapTinyItem(value: unknown): TinyRecord {
@@ -85,6 +135,12 @@ export function toNumberValue(value: unknown) {
 
   const parsed = Number(String(value).replace(",", "."));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatTinyDate(value: Date) {
+  return value.toLocaleDateString("pt-BR", {
+    timeZone: "America/Fortaleza"
+  });
 }
 
 function extractImageUrl(record: Record<string, unknown>) {
@@ -234,11 +290,11 @@ function extractStockQuantity(payload: TinyApiEnvelope) {
   return null;
 }
 
-export async function callTiny(endpoint: string, params: Record<string, string>) {
-  const token = getTinyToken();
+export async function callTiny(endpoint: string, params: Record<string, string>, accountKey: TinyAccountKey = "pepper") {
+  const token = getTinyToken(accountKey);
 
   if (!token) {
-    throw new Error("Configure TINY_API_TOKEN no arquivo .env para consultar o Tiny.");
+    throw new Error(`Configure o token Tiny da conta ${getTinyAccountLabel(accountKey)} no arquivo .env para consultar o Tiny.`);
   }
 
   const body = new URLSearchParams({
@@ -278,7 +334,7 @@ export async function callTiny(endpoint: string, params: Record<string, string>)
 export async function searchTinyProductsBySku(sku: string) {
   const payload = await callTiny("produtos.pesquisa.php", {
     pesquisa: normalizeSku(sku)
-  });
+  }, "pepper");
 
   const products = Array.isArray(payload.retorno?.produtos) ? payload.retorno.produtos : [];
 
@@ -288,22 +344,91 @@ export async function searchTinyProductsBySku(sku: string) {
 }
 
 async function getTinyProductById(id: string) {
-  const payload = await callTiny("produto.obter.php", { id });
+  const payload = await callTiny("produto.obter.php", { id }, "pepper");
   return unwrapTinyItem(payload.retorno?.produto);
 }
 
-export async function getTinyOrderById(id: string) {
-  const payload = await callTiny("pedido.obter.php", { id });
+export async function getTinyOrderById(id: string, accountKey: TinyAccountKey = "pepper") {
+  const payload = await callTiny("pedido.obter.php", { id }, accountKey);
   return unwrapTinyItem(payload.retorno?.pedido);
 }
 
-export async function getTinyContactById(id: string) {
-  const payload = await callTiny("contato.obter.php", { id });
+export async function searchTinyOrdersByDateRange(params: {
+  startDate: Date;
+  endDate: Date;
+  page?: number;
+  accountKey?: TinyAccountKey;
+}) {
+  const page = params.page ?? 1;
+  const payload = await callTiny("pedidos.pesquisa.php", {
+    dataInicial: formatTinyDate(params.startDate),
+    dataFinal: formatTinyDate(params.endDate),
+    pagina: String(page)
+  }, params.accountKey ?? "pepper");
+
+  const rawOrders = Array.isArray(payload.retorno?.pedidos) ? payload.retorno.pedidos : [];
+  const orders = rawOrders
+    .map((entry) => {
+      const record = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+      const item = unwrapTinyItem(record.pedido ?? record);
+      const id =
+        toStringValue(item.id) ??
+        toStringValue(item.idPedido) ??
+        toStringValue(item.id_pedido);
+
+      if (!id) {
+        return null;
+      }
+
+      return {
+        id,
+        number: toStringValue(item.numero) ?? toStringValue(item.numeroPedido),
+        ecommerceNumber: toStringValue(item.numeroEcommerce),
+        statusLabel: toStringValue(item.situacao),
+        orderDate:
+          toStringValue(item.dataPedido) ??
+          toStringValue(item.data_pedido) ??
+          toStringValue(item.data),
+        customerName:
+          toStringValue(item.nomeCliente) ??
+          toStringValue(item.nome) ??
+          toStringValue(unwrapTinyItem(item.cliente).nome) ??
+          toStringValue(unwrapTinyItem(item.contato).nome),
+        totalAmount:
+          toNumberValue(item.valorTotal) ??
+          toNumberValue(item.total) ??
+          toNumberValue(item.valor),
+        raw: item
+      } satisfies TinyOrderSearchResult;
+    })
+    .filter(Boolean) as TinyOrderSearchResult[];
+
+  const totalPages =
+    Math.max(
+      1,
+      Number(
+        payload.retorno?.numero_paginas ??
+          payload.retorno?.numeroPaginas ??
+          payload.retorno?.total_paginas ??
+          payload.retorno?.totalPaginas ??
+          page
+      )
+    ) || 1;
+
+  return {
+    page,
+    totalPages,
+    orders
+  } satisfies TinyOrderSearchPage;
+}
+
+export async function getTinyContactById(id: string, accountKey: TinyAccountKey = "pepper") {
+  const payload = await callTiny("contato.obter.php", { id }, accountKey);
   return unwrapTinyItem(payload.retorno?.contato);
 }
 
 export async function getTinyStockByProductId(id: string) {
-  const payload = await callTiny("produto.obter.estoque.php", { id });
+  const payload = await callTiny("produto.obter.estoque.php", { id }, "pepper");
   return extractStockQuantity(payload);
 }
 

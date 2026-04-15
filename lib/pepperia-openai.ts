@@ -1,7 +1,7 @@
 import path from "node:path";
 
 const RESPONSES_API_URL = "https://api.openai.com/v1/responses";
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-5-mini";
 
 export type SuggestionValidationResult = {
   validationStatus: "ready" | "needs_revision";
