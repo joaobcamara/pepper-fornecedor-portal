@@ -1,4 +1,6 @@
 import { getDemoSupplierDashboardData } from "@/lib/demo-data";
+import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
+import { getLocalSupplierDashboardData } from "@/lib/local-dashboard-data";
 import {
   getReplenishmentNextStep,
   getSupplierFinancialStatusLabel,
@@ -6,8 +8,8 @@ import {
 } from "@/lib/operations-workflow";
 import { prisma } from "@/lib/prisma";
 import { getReplenishmentStatusLabel } from "@/lib/replenishment-data";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getDateWindows, getMovementBadge, safeCoverageDays, sumNumbers } from "@/lib/sales-metrics";
-import { getColorLabel, getParentSku, getSizeLabel } from "@/lib/sku";
 import { getStockBand, getStockBandLabel, type StockBand, resolveStockThresholds } from "@/lib/stock";
 
 type GroupedVariant = {
@@ -123,75 +125,22 @@ export type SupplierDashboardData = {
 };
 
 export async function getSupplierDashboardDataFromDb(supplierId: string): Promise<SupplierDashboardData> {
-  let products;
+  if (isLocalOperationalMode()) {
+    return getLocalSupplierDashboardData(supplierId);
+  }
+
+  let catalogProducts;
   let metrics;
   let productMetrics;
-  let variantRefs;
   let supplierOrders;
   let replenishmentRequests;
   const windows = getDateWindows();
 
   try {
-    [products, variantRefs, supplierOrders, replenishmentRequests] = await Promise.all([
-      prisma.product.findMany({
-        where: {
-          kind: "VARIANT",
-          active: true,
-          archivedAt: null,
-          assignments: {
-            some: {
-              supplierId,
-              active: true
-            }
-          }
-        },
-        include: {
-          parent: true,
-          inventorySnapshots: {
-            orderBy: {
-              syncedAt: "desc"
-            },
-            take: 1
-          },
-          assignments: {
-            where: {
-              supplierId,
-              active: true
-            },
-            include: {
-              supplier: true
-            }
-          }
-        },
-        orderBy: {
-          sku: "asc"
-        }
-      }),
-      prisma.catalogVariant.findMany({
-        where: {
-          catalogProduct: {
-            supplierLinks: {
-              some: {
-                supplierId,
-                active: true
-              }
-            }
-          }
-        },
-        select: {
-          id: true,
-          sourceProductId: true,
-          colorLabel: true,
-          sizeLabel: true,
-          catalogProductId: true,
-          price: {
-            select: {
-              salePrice: true,
-              promotionalPrice: true,
-              costPrice: true
-            }
-          }
-        }
+    [catalogProducts, supplierOrders, replenishmentRequests] = await Promise.all([
+      listFoundationCatalogProducts({
+        supplierId,
+        onlyActive: true
       }),
       prisma.supplierOrder.findMany({
         where: {
@@ -214,8 +163,8 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
       })
     ]);
 
-    const variantIds = variantRefs.map((variant) => variant.id);
-    const catalogProductIds = Array.from(new Set(variantRefs.map((variant) => variant.catalogProductId)));
+    const variantIds = catalogProducts.flatMap((product) => product.variants.map((variant) => variant.id));
+    const catalogProductIds = catalogProducts.map((product) => product.id);
 
     [metrics, productMetrics] = await Promise.all([
       prisma.variantSalesMetricDaily.findMany({
@@ -313,113 +262,66 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
     list.push(metric);
     productMetricMap.set(metric.catalogProductId, list);
   }
+  const productCards = catalogProducts.map((product) => {
+    const variants: GroupedVariant[] = product.variants.map((variant) => {
+      const variantMetrics = metricMap.get(variant.id) ?? [];
+      const salesToday = sumNumbers(
+        variantMetrics
+          .filter((metric) => metric.date >= windows.today && metric.date < windows.tomorrow)
+          .map((metric) => metric.unitsSold)
+      );
+      const sales7d = sumNumbers(
+        variantMetrics.filter((metric) => metric.date >= windows.sevenDaysAgo).map((metric) => metric.unitsSold)
+      );
+      const sales30d = sumNumbers(variantMetrics.map((metric) => metric.unitsSold));
+      const lastSaleAt = variantMetrics.reduce<Date | null>(
+        (latest, metric) => (!latest || (metric.lastOrderAt && metric.lastOrderAt > latest) ? metric.lastOrderAt : latest),
+        null
+      );
+      const thresholds = resolveStockThresholds({
+        productCritical: variant.criticalStockThreshold,
+        productLow: variant.lowStockThreshold,
+        parentCritical: variant.parentCriticalStockThreshold,
+        parentLow: variant.parentLowStockThreshold
+      });
+      const variantBand = getStockBand(variant.quantity, thresholds);
 
-  const variantRefBySourceId = new Map(
-    variantRefs
-      .filter((variant) => variant.sourceProductId)
-      .map((variant) => [variant.sourceProductId as string, variant] as const)
-  );
-
-  const groups = new Map<
-    string,
-    {
-      id: string;
-      catalogProductId?: string;
-      sku: string;
-      supplier: string;
-      name: string;
-      imageUrl: string;
-      syncState: "fresh" | "stale";
-      lastUpdated: string;
-      variants: GroupedVariant[];
-    }
-  >();
-
-  for (const product of products) {
-    const parentSku = getParentSku(product.sku) ?? product.sku;
-    const snapshot = product.inventorySnapshots[0];
-    const supplier = product.assignments[0]?.supplier.name ?? "Fornecedor";
-    const quantity = snapshot?.quantity ?? product.fallbackInventory ?? null;
-    const variantRef = variantRefBySourceId.get(product.id);
-    const variantMetrics = variantRef ? metricMap.get(variantRef.id) ?? [] : [];
-    const salesToday = sumNumbers(
-      variantMetrics
-        .filter((metric) => metric.date >= windows.today && metric.date < windows.tomorrow)
-        .map((metric) => metric.unitsSold)
-    );
-    const sales7d = sumNumbers(
-      variantMetrics.filter((metric) => metric.date >= windows.sevenDaysAgo).map((metric) => metric.unitsSold)
-    );
-    const sales30d = sumNumbers(variantMetrics.map((metric) => metric.unitsSold));
-    const lastSaleAt = variantMetrics.reduce<Date | null>(
-      (latest, metric) => (!latest || (metric.lastOrderAt && metric.lastOrderAt > latest) ? metric.lastOrderAt : latest),
-      null
-    );
-    const thresholds = resolveStockThresholds({
-      productCritical: product.criticalStockThreshold,
-      productLow: product.lowStockThreshold,
-      parentCritical: product.parent?.criticalStockThreshold,
-      parentLow: product.parent?.lowStockThreshold
+      return {
+        id: variant.id,
+        sku: variant.sku,
+        size: variant.sizeLabel,
+        color: variant.colorLabel,
+        quantity: variant.quantity,
+        salePrice: variant.salePrice,
+        promotionalPrice: variant.promotionalPrice,
+        costPrice: variant.costPrice,
+        band: variantBand,
+        bandLabel: getStockBandLabel(variantBand),
+        criticalStockThreshold: thresholds.critical,
+        lowStockThreshold: thresholds.low,
+        salesToday,
+        sales7d,
+        sales30d,
+        lastSaleAt
+      };
     });
-    const variantBand = getStockBand(quantity, thresholds);
-    const entry = groups.get(parentSku) ?? {
-      id: parentSku,
-      catalogProductId: variantRef?.catalogProductId,
-      sku: parentSku,
-      supplier,
-      name: product.parent?.internalName ?? product.internalName,
-      imageUrl: product.parent?.imageUrl ?? product.imageUrl ?? "/brand/pepper-logo.png",
-      syncState: product.syncStatus === "STALE" || product.syncStatus === "ERROR" ? "stale" : "fresh",
-      lastUpdated: snapshot?.syncedAt
-        ? `Atualizado em ${snapshot.syncedAt.toLocaleTimeString("pt-BR", {
-            hour: "2-digit",
-            minute: "2-digit"
-          })}`
-        : "Sem sincronizacao",
-      variants: []
-    };
 
-    entry.variants.push({
-      id: product.id,
-      sku: product.sku,
-      size: getSizeLabel(product.sizeCode),
-      color: getColorLabel(product.colorCode),
-      quantity,
-      salePrice: variantRef?.price?.salePrice ?? null,
-      promotionalPrice: variantRef?.price?.promotionalPrice ?? null,
-      costPrice: variantRef?.price?.costPrice ?? null,
-      band: variantBand,
-      bandLabel: getStockBandLabel(variantBand),
-      criticalStockThreshold: thresholds.critical,
-      lowStockThreshold: thresholds.low,
-      salesToday,
-      sales7d,
-      sales30d,
-      lastSaleAt
-    });
-    entry.syncState =
-      entry.syncState === "stale" || product.syncStatus === "STALE" || product.syncStatus === "ERROR" ? "stale" : "fresh";
-
-    groups.set(parentSku, entry);
-  }
-
-  const productCards = Array.from(groups.values()).map((group) => {
-    const total = group.variants.reduce((sum, variant) => sum + (variant.quantity ?? 0), 0);
-    const priceValues = group.variants
+    const total = variants.reduce((sum, variant) => sum + (variant.quantity ?? 0), 0);
+    const priceValues = variants
       .map((variant) => variant.promotionalPrice ?? variant.salePrice)
       .filter((value): value is number => value !== null && Number.isFinite(value));
-    const band: StockBand = group.variants.some((variant) => variant.band === "critical")
+    const band: StockBand = variants.some((variant) => variant.band === "critical")
       ? "critical"
-      : group.variants.some((variant) => variant.band === "low")
+      : variants.some((variant) => variant.band === "low")
         ? "low"
-        : group.variants.some((variant) => variant.band === "ok")
+        : variants.some((variant) => variant.band === "ok")
           ? "ok"
           : "unknown";
     const priceFrom = priceValues.length > 0 ? Math.min(...priceValues) : null;
     const priceTo = priceValues.length > 0 ? Math.max(...priceValues) : null;
-    const matrix = Array.from(new Set(group.variants.map((variant) => variant.color))).map((color) => ({
+    const matrix = Array.from(new Set(variants.map((variant) => variant.color))).map((color) => ({
       color,
-        items: group.variants
+      items: variants
         .filter((variant) => variant.color === color)
         .map((variant) => ({
           id: variant.id,
@@ -441,7 +343,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
         }))
     }));
 
-    const aggregateMetrics = group.catalogProductId ? productMetricMap.get(group.catalogProductId) ?? [] : [];
+    const aggregateMetrics = productMetricMap.get(product.id) ?? [];
     const salesToday = sumNumbers(
       aggregateMetrics
         .filter((metric) => metric.date >= windows.today && metric.date < windows.tomorrow)
@@ -449,7 +351,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
     );
     const inventorySaleValue = Number(
       sumNumbers(
-        group.variants.map((variant) => {
+        variants.map((variant) => {
           const quantity = variant.quantity ?? 0;
           const effectivePrice = variant.promotionalPrice ?? variant.salePrice ?? 0;
           return quantity * effectivePrice;
@@ -458,7 +360,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
     );
     const inventoryCostValue = Number(
       sumNumbers(
-        group.variants.map((variant) => {
+        variants.map((variant) => {
           const quantity = variant.quantity ?? 0;
           return quantity * (variant.costPrice ?? 0);
         })
@@ -474,11 +376,11 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
     );
     const coverageDays = safeCoverageDays(total, sales30d);
     const movementBadge = getMovementBadge({ sales7d, sales30d, coverageDays, stockBand: band });
-    const topColor = group.variants.reduce<Record<string, number>>((acc, variant) => {
+    const topColor = variants.reduce<Record<string, number>>((acc, variant) => {
       acc[variant.color] = (acc[variant.color] ?? 0) + variant.sales30d;
       return acc;
     }, {});
-    const topSize = group.variants.reduce<Record<string, number>>((acc, variant) => {
+    const topSize = variants.reduce<Record<string, number>>((acc, variant) => {
       acc[variant.size] = (acc[variant.size] ?? 0) + variant.sales30d;
       return acc;
     }, {});
@@ -486,20 +388,25 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
       Object.entries(topColor).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
     const topSizeLabel =
       Object.entries(topSize).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-    const relatedOrders = orderMap.get(group.sku) ?? [];
+    const relatedOrders = orderMap.get(product.parentSku) ?? [];
     const activeOrder =
       relatedOrders.find((order) => !["SHIPPED", "CANCELED", "NO_STOCK"].includes(order.workflowStage)) ??
       relatedOrders[0] ??
       null;
 
     return {
-      id: group.id,
-      supplier: group.supplier,
-      name: group.name,
-      sku: group.sku,
-      imageUrl: group.imageUrl,
-      lastUpdated: group.lastUpdated,
-      syncState: group.syncState,
+      id: product.id,
+      supplier: product.supplierLinks[0]?.name ?? "Fornecedor",
+      name: product.internalName,
+      sku: product.parentSku,
+      imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
+      lastUpdated: product.lastUpdatedAt
+        ? `Atualizado em ${product.lastUpdatedAt.toLocaleTimeString("pt-BR", {
+            hour: "2-digit",
+            minute: "2-digit"
+          })}`
+        : "Sem sincronizacao",
+      syncState: product.syncState,
       total,
       band,
       bandLabel: getStockBandLabel(band),
@@ -517,7 +424,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
       topColorLabel,
       topSizeLabel,
       relatedOrderCount: relatedOrders.length,
-      replenishmentCard: replenishmentMap.get(group.sku) ?? null,
+      replenishmentCard: replenishmentMap.get(product.parentSku) ?? null,
       activeOrder: activeOrder
         ? {
             orderId: activeOrder.id,

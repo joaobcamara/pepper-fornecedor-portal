@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, SendHorizonal, Sparkles } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -25,30 +25,40 @@ export function PepperIaPanel({
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isSending, startSending] = useTransition();
+  const [isSending, setIsSending] = useState(false);
 
   async function sendMessage(formData: FormData) {
     setError(null);
+    setIsSending(true);
 
-    const response = await fetch("/api/pepperia/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message: String(formData.get("message") ?? "")
-      })
-    });
+    try {
+      const response = await fetch("/api/pepperia/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: String(formData.get("message") ?? "")
+        })
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel falar com a Pepper IA agora.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel falar com a Pepper IA agora.");
+        return;
+      }
+
+      formRef.current?.reset();
+      router.refresh();
+    } finally {
+      setIsSending(false);
     }
+  }
 
-    formRef.current?.reset();
-    router.refresh();
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(new FormData(event.currentTarget));
   }
 
   return (
@@ -119,7 +129,7 @@ export function PepperIaPanel({
           )}
         </div>
 
-        <form ref={formRef} action={(formData) => startSending(() => void sendMessage(formData))} className="mt-6 rounded-[1.8rem] border border-slate-200 bg-slate-50/80 p-4">
+        <form ref={formRef} onSubmit={handleSubmit} className="mt-6 rounded-[1.8rem] border border-slate-200 bg-slate-50/80 p-4">
           <label className="block">
             <span className="mb-2 block text-sm font-semibold text-slate-700">Pergunta</span>
             <textarea
@@ -132,7 +142,7 @@ export function PepperIaPanel({
 
           {error ? <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
-          <button type="submit" className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">
+          <button type="submit" disabled={isSending} className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
             {isSending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
             {isSending ? "Consultando..." : "Perguntar para a Pepper IA"}
           </button>

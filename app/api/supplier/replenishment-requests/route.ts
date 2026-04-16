@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createLocalReplenishmentRequest, getLocalSupplierDirectory } from "@/lib/local-operations-store";
 import { buildPurchaseOrderHtml } from "@/lib/order-html";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";
 
 const itemSchema = z.object({
@@ -41,21 +43,94 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Informe ao menos uma quantidade para enviar a solicitacao." }, { status: 400 });
     }
 
-    const html = await buildPurchaseOrderHtml(body.data);
-    const product = await prisma.product.findFirst({
-      where: {
-        sku: body.data.productSku
-      },
-      select: {
-        id: true
+    if (isLocalOperationalMode()) {
+      const html = await buildPurchaseOrderHtml(body.data).catch(() => `
+        <html>
+          <body>
+            <h1>Solicitacao de Reposicao</h1>
+            <p>Fornecedor: ${body.data.supplierName}</p>
+            <p>Produto: ${body.data.productName}</p>
+            <p>SKU: ${body.data.productSku}</p>
+          </body>
+        </html>
+      `.trim());
+      const localSuppliers = await getLocalSupplierDirectory();
+      const resolvedSupplierId =
+        (session.supplierId && localSuppliers.some((supplier) => supplier.id === session.supplierId) ? session.supplierId : null) ??
+        localSuppliers.find((supplier) => supplier.active)?.id ??
+        null;
+
+      if (!resolvedSupplierId) {
+        throw new Error("Nenhum fornecedor local ativo foi encontrado para registrar a solicitacao.");
       }
-    });
+
+      const replenishmentRequest = await createLocalReplenishmentRequest({
+        supplierId: resolvedSupplierId,
+        createdByUserId: session.userId,
+        createdByUsername: session.username,
+        productName: body.data.productName,
+        productSku: body.data.productSku,
+        imageUrl: body.data.imageUrl ?? null,
+        note: body.data.note?.trim() || null,
+        htmlContent: html,
+        items: selectedItems.map((variant) => ({
+          sku: variant.sku,
+          size: variant.size,
+          color: variant.color,
+          currentStock: variant.currentStock,
+          requestedQuantity: variant.requestedQuantity
+        }))
+      });
+
+      return NextResponse.json({
+        ok: true,
+        requestId: replenishmentRequest.id,
+        verification: {
+          storedInFoundation: true,
+          visibleForAdmin: true
+        }
+      });
+    }
+
+    const html = await buildPurchaseOrderHtml(body.data);
+
+    const normalizedSku = body.data.productSku.trim();
+    const parentSku = normalizedSku.split("-").length >= 4 ? normalizedSku.split("-").slice(0, 2).join("-") : normalizedSku;
+
+    const [catalogVariant, catalogProduct, product] = await Promise.all([
+      prisma.catalogVariant.findUnique({
+        where: {
+          sku: normalizedSku
+        },
+        select: {
+          sourceProductId: true
+        }
+      }),
+      prisma.catalogProduct.findUnique({
+        where: {
+          skuParent: parentSku
+        },
+        select: {
+          sourceProductId: true
+        }
+      }),
+      prisma.product.findFirst({
+        where: {
+          OR: [{ sku: normalizedSku }, { sku: parentSku }]
+        },
+        select: {
+          id: true
+        }
+      })
+    ]);
+
+    const productId = catalogVariant?.sourceProductId ?? catalogProduct?.sourceProductId ?? product?.id ?? null;
 
     const replenishmentRequest = await prisma.replenishmentRequest.create({
       data: {
         supplierId: session.supplierId,
         createdByUserId: session.userId,
-        productId: product?.id ?? null,
+        productId,
         productName: body.data.productName,
         productSku: body.data.productSku,
         imageUrl: body.data.imageUrl ?? null,
@@ -75,11 +150,21 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      requestId: replenishmentRequest.id
+      requestId: replenishmentRequest.id,
+      verification: {
+        storedInFoundation: true,
+        visibleForAdmin: true
+      }
     });
-  } catch {
+  } catch (error) {
+    console.error("[supplier-replenishment]", error);
     return NextResponse.json(
-      { error: "Nao foi possivel registrar a solicitacao de reposicao agora." },
+      {
+        error:
+          isLocalOperationalMode() && error instanceof Error
+            ? error.message
+            : "Nao foi possivel registrar a solicitacao de reposicao agora."
+      },
       { status: 503 }
     );
   }

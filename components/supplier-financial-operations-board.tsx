@@ -1,14 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, LoaderCircle, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   type SupplierFinancialBoardEntry,
   type SupplierFinancialReadyOrder,
   getSupplierFinancialSummary
-} from "@/lib/supplier-financial-entries";
+} from "@/lib/supplier-financial-shared";
 import {
   getSupplierFinancialNextStep,
   getSupplierFinancialStatusTone,
@@ -21,6 +21,8 @@ import { OperationsFlowPanel } from "@/components/operations-flow-panel";
 function currency(value: number) {
   return `R$ ${value.toFixed(2).replace(".", ",")}`;
 }
+
+const SUPPLIER_FINANCIAL_FLASH_KEY = "supplier-financial:flash";
 
 export function SupplierFinancialOperationsBoard({
   readyOrders,
@@ -37,47 +39,76 @@ export function SupplierFinancialOperationsBoard({
   const [amount, setAmount] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const selectedReadyOrder = readyOrders.find((item) => item.id === selectedReadyOrderId) ?? null;
   const selectedEntry = entries.find((item) => item.id === selectedEntryId) ?? null;
   const summary = useMemo(() => getSupplierFinancialSummary(entries), [entries]);
+
+  useEffect(() => {
+    const flash = window.sessionStorage.getItem(SUPPLIER_FINANCIAL_FLASH_KEY);
+
+    if (flash) {
+      setFeedback(flash);
+      window.sessionStorage.removeItem(SUPPLIER_FINANCIAL_FLASH_KEY);
+    }
+  }, []);
 
   async function submitToFinancial() {
     if (!selectedReadyOrder) return;
 
     setFeedback(null);
     setError(null);
+    setIsSubmitting(true);
 
-    const formData = new FormData();
-    formData.set("orderId", selectedReadyOrder.id);
-    formData.set("dueDate", dueDate);
-    formData.set("note", note);
-    formData.set("supplierNote", supplierNote);
-    formData.set("amount", amount || String(selectedReadyOrder.confirmedTotalCost));
+    try {
+      const formData = new FormData();
+      formData.set("orderId", selectedReadyOrder.id);
+      formData.set("dueDate", dueDate);
+      formData.set("note", note);
+      formData.set("supplierNote", supplierNote);
+      formData.set("amount", amount || String(selectedReadyOrder.confirmedTotalCost));
 
-    const romaneioInput = document.getElementById("financial-romaneio-upload") as HTMLInputElement | null;
-    const notaInput = document.getElementById("financial-nota-upload") as HTMLInputElement | null;
-    const romaneio = romaneioInput?.files?.[0];
-    const notaFiscal = notaInput?.files?.[0];
+      const romaneioInput = document.getElementById("financial-romaneio-upload") as HTMLInputElement | null;
+      const notaInput = document.getElementById("financial-nota-upload") as HTMLInputElement | null;
+      const romaneio = romaneioInput?.files?.[0];
+      const notaFiscal = notaInput?.files?.[0];
 
-    if (romaneio) formData.set("romaneio", romaneio);
-    if (notaFiscal) formData.set("notaFiscal", notaFiscal);
+      if (romaneio) formData.set("romaneio", romaneio);
+      if (notaFiscal) formData.set("notaFiscal", notaFiscal);
 
-    const response = await fetch("/api/supplier/financial-entries", {
-      method: "POST",
-      body: formData
-    });
+      const response = await fetch("/api/supplier/financial-entries", {
+        method: "POST",
+        body: formData
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        verification?: {
+          storedInFoundation: boolean;
+          visibleForAdminFinancial: boolean;
+          supplierWorkflowMoved: boolean;
+        };
+      };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel enviar para o financeiro.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel enviar para o financeiro.");
+        return;
+      }
+
+      const successMessage =
+        payload.verification?.storedInFoundation &&
+        payload.verification?.visibleForAdminFinancial &&
+        payload.verification?.supplierWorkflowMoved
+          ? "Card enviado, validado na fundacao e pronto para revisao financeira do admin."
+          : "Card enviado para revisao financeira.";
+      window.sessionStorage.setItem(SUPPLIER_FINANCIAL_FLASH_KEY, successMessage);
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel enviar para o financeiro.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setFeedback("Card enviado para revisao financeira.");
-    window.location.reload();
   }
 
   return (
@@ -132,9 +163,20 @@ export function SupplierFinancialOperationsBoard({
                   className="rounded-[1.6rem] border border-slate-100 bg-slate-50/80 p-4 text-left transition hover:-translate-y-0.5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{order.orderNumber}</p>
-                      <p className="text-xs text-slate-500">{order.originLabel}</p>
+                    <div className="flex items-start gap-3">
+                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white bg-white shadow-sm">
+                        <Image
+                          src={order.imageUrl ?? "/brand/pepper-logo.png"}
+                          alt={order.productName}
+                          fill
+                          className="object-cover p-1.5"
+                          sizes="56px"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{order.orderNumber}</p>
+                        <p className="text-xs text-slate-500">{order.originLabel}</p>
+                      </div>
                     </div>
                     <span className={cn("rounded-full px-3 py-1 text-[11px] font-semibold", getSupplierOrderWorkflowTone(order.workflowStage))}>
                       {order.workflowStageLabel}
@@ -186,9 +228,20 @@ export function SupplierFinancialOperationsBoard({
                   className="rounded-[1.6rem] border border-slate-100 bg-slate-50/80 p-4 text-left transition hover:-translate-y-0.5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{entry.title}</p>
-                      <p className="text-xs text-slate-500">{entry.originLabel}</p>
+                    <div className="flex items-start gap-3">
+                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white bg-white shadow-sm">
+                        <Image
+                          src={entry.imageUrl ?? "/brand/pepper-logo.png"}
+                          alt={entry.productName}
+                          fill
+                          className="object-cover p-1.5"
+                          sizes="56px"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{entry.title}</p>
+                        <p className="text-xs text-slate-500">{entry.originLabel}</p>
+                      </div>
                     </div>
                     <span className={cn("rounded-full px-3 py-1 text-[11px] font-semibold", getSupplierFinancialStatusTone(entry.status))}>
                       {entry.statusLabel}
@@ -333,11 +386,12 @@ export function SupplierFinancialOperationsBoard({
 
                 <button
                   type="button"
-                  onClick={() => startTransition(() => void submitToFinancial())}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                  disabled={isSubmitting}
+                  onClick={() => void submitToFinancial()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
-                  {isPending ? "Enviando..." : "Enviar para financeiro"}
+                  {isSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+                  {isSubmitting ? "Enviando..." : "Enviar para financeiro"}
                 </button>
               </div>
             </div>

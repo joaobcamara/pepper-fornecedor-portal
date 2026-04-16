@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
 import { ConversationShortcutGroup, ConversationShortcutItem } from "@/lib/chat-shortcuts-shared";
 import {
   getOperationalOriginLabel,
@@ -81,30 +82,8 @@ export async function getAdminConversationShortcutGroups(): Promise<Conversation
         orderBy: { createdAt: "desc" },
         take: 12
       }),
-      prisma.product.findMany({
-        where: {
-          kind: "VARIANT",
-          active: true,
-          archivedAt: null,
-          assignments: {
-            some: {
-              active: true
-            }
-          }
-        },
-        include: {
-          parent: true,
-          assignments: {
-            where: {
-              active: true
-            },
-            include: {
-              supplier: true
-            }
-          }
-        },
-        orderBy: { sku: "asc" },
-        take: 40
+      listFoundationCatalogProducts({
+        onlyActive: true
       })
     ]);
 
@@ -126,17 +105,13 @@ export async function getAdminConversationShortcutGroups(): Promise<Conversation
       }
     }
 
-    for (const product of products) {
-      const parentId = product.parent?.id ?? product.id;
-      const parentSku = product.parent?.sku ?? product.sku;
-      const parentName = product.parent?.internalName ?? product.internalName;
-
-      for (const assignment of product.assignments) {
-        const key = `${assignment.supplierId}:${parentId}`;
+    for (const product of products.slice(0, 40)) {
+      for (const supplierLink of product.supplierLinks) {
+        const key = `${supplierLink.id}:${product.id}`;
 
         if (!productItems.has(key)) {
-          const replenishment = latestReplenishmentByKey.get(`${assignment.supplierId}:${parentSku}`);
-          const order = latestOrderByKey.get(`${assignment.supplierId}:${parentSku}`);
+          const replenishment = latestReplenishmentByKey.get(`${supplierLink.id}:${product.parentSku}`);
+          const order = latestOrderByKey.get(`${supplierLink.id}:${product.parentSku}`);
           const nextStepLabel = order
             ? getSupplierOrderNextStep(order.workflowStage, Boolean(order.financialEntry)).label
             : replenishment
@@ -146,11 +121,11 @@ export async function getAdminConversationShortcutGroups(): Promise<Conversation
           productItems.set(key, {
             id: key,
             referenceType: "PRODUCT",
-            referenceId: parentId,
-            title: parentName,
-            subtitle: `${parentSku} - ${nextStepLabel}`,
-            badge: assignment.supplier.name,
-            href: buildHref("/admin/produtos", { sku: parentSku }),
+            referenceId: product.id,
+            title: product.internalName,
+            subtitle: `${product.parentSku} - ${nextStepLabel}`,
+            badge: supplierLink.name,
+            href: buildHref("/admin/produtos", { sku: product.parentSku }),
             metaJson: buildReferenceMeta({
               originLabel: order
                 ? getOperationalOriginLabel(order.originType)
@@ -168,7 +143,7 @@ export async function getAdminConversationShortcutGroups(): Promise<Conversation
                 : replenishment
                   ? ["Sugestao de compra", "Pedidos ao Fornecedor"]
                   : ["Produtos"],
-              helperLabel: `Fornecedor ${assignment.supplier.name}`
+              helperLabel: `Fornecedor ${supplierLink.name}`
             })
           });
         }
@@ -308,23 +283,9 @@ export async function getAdminConversationShortcutGroups(): Promise<Conversation
 export async function getSupplierConversationShortcutGroups(supplierId: string): Promise<ConversationShortcutGroup[]> {
   try {
     const [products, suggestions, replenishments, orders] = await Promise.all([
-      prisma.product.findMany({
-        where: {
-          kind: "VARIANT",
-          active: true,
-          archivedAt: null,
-          assignments: {
-            some: {
-              supplierId,
-              active: true
-            }
-          }
-        },
-        include: {
-          parent: true
-        },
-        orderBy: { sku: "asc" },
-        take: 40
+      listFoundationCatalogProducts({
+        supplierId,
+        onlyActive: true
       }),
       prisma.productSuggestion.findMany({
         where: { supplierId },
@@ -366,27 +327,24 @@ export async function getSupplierConversationShortcutGroups(supplierId: string):
       }
     }
 
-    for (const product of products) {
-      const parentId = product.parent?.id ?? product.id;
-      const parentSku = product.parent?.sku ?? product.sku;
-
-      if (!productItems.has(parentId)) {
-        const replenishment = latestReplenishmentBySku.get(parentSku);
-        const order = latestOrderBySku.get(parentSku);
+    for (const product of products.slice(0, 40)) {
+      if (!productItems.has(product.id)) {
+        const replenishment = latestReplenishmentBySku.get(product.parentSku);
+        const order = latestOrderBySku.get(product.parentSku);
         const nextStepLabel = order
           ? getSupplierOrderNextStep(order.workflowStage, Boolean(order.financialEntry)).label
           : replenishment
             ? getReplenishmentNextStep(replenishment.status as "PENDING" | "APPROVED" | "REJECTED").label
             : "Acompanhar giro e abrir reposicao quando necessario";
 
-        productItems.set(parentId, {
-          id: parentId,
+        productItems.set(product.id, {
+          id: product.id,
           referenceType: "PRODUCT",
-          referenceId: parentId,
-          title: product.parent?.internalName ?? product.internalName,
-          subtitle: `${parentSku} - ${nextStepLabel}`,
+          referenceId: product.id,
+          title: product.internalName,
+          subtitle: `${product.parentSku} - ${nextStepLabel}`,
           badge: "Produto monitorado",
-          href: buildHref("/produtos", { sku: parentSku }),
+          href: buildHref("/produtos", { sku: product.parentSku }),
           metaJson: buildReferenceMeta({
             originLabel: order
               ? getOperationalOriginLabel(order.originType)

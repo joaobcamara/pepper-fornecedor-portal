@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { type ReactNode, useMemo, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ClipboardList,
@@ -61,6 +61,9 @@ type DraftState = {
   internalReviewNote: string;
 };
 
+const LOCKED_ADMIN_STATUSES = new Set(["APPROVED_FOR_CATALOG", "IMPORTED_BY_CATALOG"]);
+const ADMIN_SUGGESTION_FLASH_KEY = "admin-suggestions:flash";
+
 function buildDraft(suggestion: SuggestionCard): DraftState {
   return {
     productName: suggestion.productName,
@@ -95,7 +98,18 @@ export function AdminSuggestionWorkbenchV3({ suggestions }: { suggestions: Sugge
   );
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingStatus, setPendingStatus] = useState<"REVIEWING" | "NEEDS_REVISION" | "APPROVED_FOR_CATALOG" | "REJECTED" | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const raw = window.sessionStorage.getItem(ADMIN_SUGGESTION_FLASH_KEY);
+
+    if (!raw) return;
+
+    window.sessionStorage.removeItem(ADMIN_SUGGESTION_FLASH_KEY);
+    setMessage(raw);
+  }, []);
 
   const summary = useMemo(
     () => ({
@@ -108,6 +122,7 @@ export function AdminSuggestionWorkbenchV3({ suggestions }: { suggestions: Sugge
   );
 
   const selectedSuggestion = items.find((item) => item.id === modalId) ?? null;
+  const selectedSuggestionLocked = Boolean(selectedSuggestion && LOCKED_ADMIN_STATUSES.has(selectedSuggestion.status));
 
   function updateDraft(id: string, patch: Partial<DraftState>) {
     setDrafts((current) => ({
@@ -120,99 +135,71 @@ export function AdminSuggestionWorkbenchV3({ suggestions }: { suggestions: Sugge
   }
 
   async function submitReview(id: string, status: "REVIEWING" | "NEEDS_REVISION" | "APPROVED_FOR_CATALOG" | "REJECTED") {
-    const draft = drafts[id];
-    setMessage(null);
-    setError(null);
+    const suggestion = items.find((item) => item.id === id);
 
-    const response = await fetch("/api/admin/suggestions/review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        suggestionId: id,
-        productName: draft.productName,
-        price: Number(draft.price),
-        material: draft.material,
-        modelDescription: draft.modelDescription,
-        supplierVisibleNote: draft.supplierVisibleNote,
-        internalReviewNote: draft.internalReviewNote,
-        status
-      })
-    });
-
-    const payload = (await response.json()) as { error?: string };
-
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel atualizar a sugestao.");
+    if (suggestion && LOCKED_ADMIN_STATUSES.has(suggestion.status)) {
+      setError("Sugestoes aprovadas ou importadas ficam bloqueadas para novas alteracoes.");
       return;
     }
 
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              status,
-              statusLabel:
-                status === "APPROVED_FOR_CATALOG"
-                  ? "Aprovado para cadastro"
-                  : status === "NEEDS_REVISION"
-                    ? "Precisa de correcao"
-                    : status === "REJECTED"
-                      ? "Reprovado"
-                      : "Em analise",
-              productName: draft.productName,
-              price: Number(draft.price),
-              material: draft.material,
-              modelDescription: draft.modelDescription,
-              supplierVisibleNote: draft.supplierVisibleNote || null,
-              internalReviewNote: draft.internalReviewNote || null,
-              approvedAt: status === "APPROVED_FOR_CATALOG" ? "Agora" : item.approvedAt,
-              approvedBy: status === "APPROVED_FOR_CATALOG" ? "admin" : item.approvedBy,
-              onboardingItem:
-                status === "APPROVED_FOR_CATALOG"
-                  ? {
-                      id: item.onboardingItem?.id ?? item.id,
-                      status: "READY",
-                      readyForCatalogAt: "Agora",
-                      importedAt: null,
-                      importedBy: null
-                    }
-                  : item.onboardingItem,
-              statusHistory: [
-                {
-                  id: `${item.id}-${Date.now()}`,
-                  fromStatus: item.status,
-                  toStatus: status,
-                  toStatusLabel:
-                    status === "APPROVED_FOR_CATALOG"
-                      ? "Aprovado para cadastro"
-                      : status === "NEEDS_REVISION"
-                        ? "Precisa de correcao"
-                        : status === "REJECTED"
-                          ? "Reprovado"
-                          : "Em analise",
-                  note: draft.supplierVisibleNote || draft.internalReviewNote || null,
-                  visibleToSupplier: status === "APPROVED_FOR_CATALOG" || status === "NEEDS_REVISION",
-                  actorName: "admin",
-                  createdAt: "Agora"
-                },
-                ...item.statusHistory
-              ]
-            }
-          : item
-      )
-    );
+    const draft = drafts[id];
+    setMessage(null);
+    setError(null);
+    setPendingStatus(status);
 
-    setMessage(
-      status === "APPROVED_FOR_CATALOG"
-        ? "Sugestao aprovada e enviada para a fila de cadastro."
-        : status === "NEEDS_REVISION"
-          ? "Sugestao devolvida ao fornecedor para correcao."
-          : status === "REJECTED"
-            ? "Sugestao reprovada e encerrada."
-            : "Analise salva com sucesso."
-    );
-    setModalId(null);
+    try {
+      const response = await fetch("/api/admin/suggestions/review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          suggestionId: id,
+          productName: draft.productName,
+          price: Number(draft.price),
+          material: draft.material,
+          modelDescription: draft.modelDescription,
+          supplierVisibleNote: draft.supplierVisibleNote,
+          internalReviewNote: draft.internalReviewNote,
+          status
+        })
+      });
+
+      const payload = (await response.json()) as {
+        error?: string;
+        verification?: {
+          storedInFoundation?: boolean;
+          visibleForSupplier?: boolean;
+          onboardingReady?: boolean;
+        };
+      };
+
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel atualizar a sugestao.");
+        return;
+      }
+
+      const persisted =
+        payload.verification?.storedInFoundation &&
+        payload.verification?.visibleForSupplier &&
+        payload.verification?.onboardingReady;
+
+      window.sessionStorage.setItem(
+        ADMIN_SUGGESTION_FLASH_KEY,
+        persisted
+          ? status === "APPROVED_FOR_CATALOG"
+            ? "Sugestao aprovada, validada na fundacao e enviada para a fila de cadastro."
+            : status === "NEEDS_REVISION"
+              ? "Sugestao devolvida e validada na fundacao para o fornecedor corrigir."
+              : status === "REJECTED"
+                ? "Sugestao reprovada e registrada na fundacao."
+                : "Analise salva e validada na fundacao."
+          : "Sugestao atualizada. A tela foi recarregada para validar o estado real na fundacao."
+      );
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel atualizar a sugestao.");
+    } finally {
+      setPendingStatus(null);
+    }
   }
 
   return (
@@ -313,10 +300,11 @@ export function AdminSuggestionWorkbenchV3({ suggestions }: { suggestions: Sugge
         <SuggestionOperationalModal
           suggestion={selectedSuggestion}
           draft={drafts[selectedSuggestion.id]}
+          locked={selectedSuggestionLocked}
           onClose={() => setModalId(null)}
           onChange={updateDraft}
-          onSubmit={(id, status) => startTransition(() => void submitReview(id, status))}
-          isPending={isPending}
+          onSubmit={(id, status) => void submitReview(id, status)}
+          pendingStatus={pendingStatus}
         />
       ) : null}
     </section>
@@ -326,17 +314,19 @@ export function AdminSuggestionWorkbenchV3({ suggestions }: { suggestions: Sugge
 function SuggestionOperationalModal({
   suggestion,
   draft,
+  locked,
   onClose,
   onChange,
   onSubmit,
-  isPending
+  pendingStatus
 }: {
   suggestion: SuggestionCard;
   draft: DraftState;
+  locked: boolean;
   onClose: () => void;
   onChange: (id: string, patch: Partial<DraftState>) => void;
   onSubmit: (id: string, status: "REVIEWING" | "NEEDS_REVISION" | "APPROVED_FOR_CATALOG" | "REJECTED") => void;
-  isPending: boolean;
+  pendingStatus: "REVIEWING" | "NEEDS_REVISION" | "APPROVED_FOR_CATALOG" | "REJECTED" | null;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
@@ -411,33 +401,39 @@ function SuggestionOperationalModal({
           </div>
 
           <div className="space-y-4">
+            {locked ? <div className="rounded-[1.4rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">Card bloqueado: sugestoes aprovadas ou importadas ficam somente para visualizacao.</div> : null}
             <Field
               label="Nome do produto"
               value={draft.productName}
               onChange={(value) => onChange(suggestion.id, { productName: value })}
+              disabled={locked}
             />
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Preco" value={draft.price} onChange={(value) => onChange(suggestion.id, { price: value })} />
+              <Field label="Preco" value={draft.price} onChange={(value) => onChange(suggestion.id, { price: value })} disabled={locked} />
               <Field
                 label="Material"
                 value={draft.material}
                 onChange={(value) => onChange(suggestion.id, { material: value })}
+                disabled={locked}
               />
             </div>
             <TextArea
               label="Caracteristica / modelo"
               value={draft.modelDescription}
               onChange={(value) => onChange(suggestion.id, { modelDescription: value })}
+              disabled={locked}
             />
             <TextArea
               label="Observacao interna"
               value={draft.internalReviewNote}
               onChange={(value) => onChange(suggestion.id, { internalReviewNote: value })}
+              disabled={locked}
             />
             <TextArea
               label="Observacao para o fornecedor"
               value={draft.supplierVisibleNote}
               onChange={(value) => onChange(suggestion.id, { supplierVisibleNote: value })}
+              disabled={locked}
             />
 
             <div className="rounded-[1.4rem] border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-600">
@@ -447,35 +443,39 @@ function SuggestionOperationalModal({
             <div className="grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
+                disabled={pendingStatus !== null || locked}
                 onClick={() => onSubmit(suggestion.id, "REVIEWING")}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
-                Salvar analise
+                {pendingStatus === "REVIEWING" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
+                {pendingStatus === "REVIEWING" ? "Salvando..." : "Salvar analise"}
               </button>
               <button
                 type="button"
+                disabled={pendingStatus !== null || locked}
                 onClick={() => onSubmit(suggestion.id, "NEEDS_REVISION")}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RotateCcw className="h-4 w-4" />
-                Devolver para correcao
+                {pendingStatus === "NEEDS_REVISION" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                {pendingStatus === "NEEDS_REVISION" ? "Devolvendo..." : "Devolver para correcao"}
               </button>
               <button
                 type="button"
+                disabled={pendingStatus !== null || locked}
                 onClick={() => onSubmit(suggestion.id, "APPROVED_FOR_CATALOG")}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <CheckCircle2 className="h-4 w-4" />
-                Aprovar para cadastro
+                {pendingStatus === "APPROVED_FOR_CATALOG" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                {pendingStatus === "APPROVED_FOR_CATALOG" ? "Aprovando..." : "Aprovar para cadastro"}
               </button>
               <button
                 type="button"
+                disabled={pendingStatus !== null || locked}
                 onClick={() => onSubmit(suggestion.id, "REJECTED")}
-                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white"
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <XCircle className="h-4 w-4" />
-                Reprovar
+                {pendingStatus === "REJECTED" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                {pendingStatus === "REJECTED" ? "Reprovando..." : "Reprovar"}
               </button>
             </div>
           </div>
@@ -503,20 +503,20 @@ function MetricValue({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function Field({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <label className="block rounded-[1.4rem] border border-slate-200 bg-white p-4">
       <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} className="mt-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none" />
+      <input value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="mt-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:bg-slate-100" />
     </label>
   );
 }
 
-function TextArea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function TextArea({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <label className="block rounded-[1.4rem] border border-slate-200 bg-white p-4">
       <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} className="mt-3 min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none" />
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="mt-3 min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:bg-slate-100" />
     </label>
   );
 }

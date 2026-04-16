@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { AdminProductThresholdManager } from "@/components/admin-product-threshold-manager";
+import { AdminProductInventoryManager } from "@/components/admin-product-inventory-manager";
 import { AdminShellV2 as AdminShell } from "@/components/admin-shell-v2";
 import { getAdminPageData } from "@/lib/admin-data";
 import { getCurrentSession } from "@/lib/session";
@@ -11,7 +11,7 @@ export default async function AdminProductsPage() {
     redirect("/login?next=/admin/produtos");
   }
 
-  const { suppliers, productGroups } = await getAdminPageData();
+  const { suppliers, productGroups, dashboard, tinyConfigured } = await getAdminPageData();
   const staleGroupCount = productGroups.filter((item) => item.staleCount > 0).length;
   const openReplenishmentCount = productGroups.filter((item) => item.replenishmentCard).length;
   const activeOperationalCount = productGroups.filter((item) => item.activeOrder).length;
@@ -30,7 +30,12 @@ export default async function AdminProductsPage() {
       title="Produtos"
       description="Gestão operacional dos produtos já importados, com edição do nome interno, status ativo e vínculos com fornecedores."
     >
-      <AdminProductThresholdManager suppliers={suppliers} productGroups={productGroups} />
+      <AdminProductInventoryManager
+        suppliers={suppliers}
+        productGroups={productGroups}
+        dashboard={dashboard}
+        tinyConfigured={tinyConfigured}
+      />
     </AdminShell>
   );
 }

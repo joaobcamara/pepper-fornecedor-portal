@@ -5,7 +5,9 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { saveUploadedFile } from "@/lib/local-files";
+import { updateLocalSupplierOrder } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";
 
 function resolveOrderStatus(params: {
@@ -60,6 +62,49 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Pedido invalido." }, { status: 400 });
     }
 
+    const parsedItems = (JSON.parse(itemsJson) as Array<{
+      id: string;
+      fulfilledQuantity?: number;
+      itemStatus?: SupplierOrderItemStatus;
+      supplierItemNote?: string;
+      confirmedUnitCost?: number | null;
+    }>).map((item) => ({
+      id: item.id,
+      fulfilledQuantity: Number(item.fulfilledQuantity ?? 0),
+      itemStatus: item.itemStatus ?? SupplierOrderItemStatus.PENDING,
+      supplierItemNote: item.supplierItemNote?.trim() || null,
+      confirmedUnitCost:
+        item.confirmedUnitCost === null || item.confirmedUnitCost === undefined || item.confirmedUnitCost === 0
+          ? null
+          : Number(item.confirmedUnitCost)
+    }));
+
+    const uploadedRomaneio =
+      romaneio instanceof File && romaneio.size > 0
+        ? await saveUploadedFile({
+            file: romaneio,
+            folder: "uploads/supplier-orders",
+            prefix: "romaneio"
+          })
+        : null;
+
+    if (isLocalOperationalMode()) {
+      await updateLocalSupplierOrder({
+        supplierId: session.supplierId,
+        orderId,
+        supplierNote,
+        expectedShipDate,
+        requestedStatus,
+        workflowAction,
+        supplierHasNoStock,
+        items: parsedItems,
+        uploadedRomaneio,
+        actorUsername: session.username
+      });
+
+      return NextResponse.json({ ok: true });
+    }
+
     const existing = await prisma.supplierOrder.findFirst({
       where: {
         id: orderId,
@@ -73,22 +118,6 @@ export async function PATCH(request: Request) {
     if (!existing) {
       return NextResponse.json({ error: "Pedido nao encontrado." }, { status: 404 });
     }
-
-    const parsedItems = (JSON.parse(itemsJson) as Array<{
-      id: string;
-      fulfilledQuantity?: number;
-      itemStatus?: SupplierOrderItemStatus;
-      supplierItemNote?: string;
-      confirmedUnitCost?: number | null;
-    }>).map((item) => ({
-      id: item.id,
-      fulfilledQuantity: Number(item.fulfilledQuantity ?? 0),
-      itemStatus: item.itemStatus ?? SupplierOrderItemStatus.PENDING,
-      supplierItemNote: item.supplierItemNote?.trim() || null,
-      confirmedUnitCost: item.confirmedUnitCost === null || item.confirmedUnitCost === undefined || item.confirmedUnitCost === 0
-        ? null
-        : Number(item.confirmedUnitCost)
-    }));
 
     const anyNoStock = supplierHasNoStock || parsedItems.some((item) => item.itemStatus === SupplierOrderItemStatus.NO_STOCK);
     const anyPartial = parsedItems.some((item) => item.itemStatus === SupplierOrderItemStatus.PARTIAL);
@@ -111,15 +140,6 @@ export async function PATCH(request: Request) {
       const confirmedUnitCost = update?.confirmedUnitCost ?? item.confirmedUnitCost ?? item.unitCost ?? 0;
       return sum + fulfilledQuantity * confirmedUnitCost;
     }, 0);
-
-    const uploadedRomaneio =
-      romaneio instanceof File && romaneio.size > 0
-        ? await saveUploadedFile({
-            file: romaneio,
-            folder: "uploads/supplier-orders",
-            prefix: "romaneio"
-          })
-        : null;
 
     await prisma.supplierOrder.update({
       where: { id: existing.id },

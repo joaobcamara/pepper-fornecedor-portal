@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { CheckCircle2, LoaderCircle, RefreshCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -50,7 +50,7 @@ export function AdminProductManager({
   );
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, startSaving] = useTransition();
+  const [savingSku, setSavingSku] = useState<string | null>(null);
 
   function updateDraft(parentSku: string, data: Partial<{ internalName: string; active: boolean; supplierIds: string[] }>) {
     setDrafts((current) => ({
@@ -65,27 +65,35 @@ export function AdminProductManager({
   async function saveGroup(parentSku: string) {
     setFeedback(null);
     setError(null);
+    setSavingSku(parentSku);
 
     const draft = drafts[parentSku];
-    const response = await fetch("/api/admin/products/settings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        parentSku,
-        ...draft
-      })
-    });
 
-    const payload = (await response.json()) as { error?: string };
+    try {
+      const response = await fetch("/api/admin/products/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          parentSku,
+          ...draft
+        })
+      });
 
-    if (!response.ok) {
-      setError(payload.error ?? "Não foi possível atualizar o produto.");
-      return;
+      const payload = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel atualizar o produto.");
+        return;
+      }
+
+      setFeedback(`Produto ${parentSku} atualizado com sucesso.`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel atualizar o produto.");
+    } finally {
+      setSavingSku(null);
     }
-
-    setFeedback(`Produto ${parentSku} atualizado com sucesso.`);
   }
 
   return (
@@ -206,11 +214,12 @@ export function AdminProductManager({
                 <p className="text-xs text-slate-500">Atualizado no sistema em {group.updatedAt}</p>
                 <button
                   type="button"
-                  onClick={() => startSaving(() => void saveGroup(group.parentSku))}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
+                  disabled={savingSku !== null}
+                  onClick={() => void saveGroup(group.parentSku)}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Salvar ajustes
+                  {savingSku === group.parentSku ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {savingSku === group.parentSku ? "Salvando..." : "Salvar ajustes"}
                 </button>
               </div>
             </article>

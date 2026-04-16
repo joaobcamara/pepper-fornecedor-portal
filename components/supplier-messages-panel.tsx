@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { type FormEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, Paperclip, Plus, SendHorizonal, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -36,7 +36,7 @@ export function SupplierMessagesPanel({
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isSending, startSending] = useTransition();
+  const [isSending, setIsSending] = useState(false);
   const [shortcutPanelOpen, setShortcutPanelOpen] = useState(false);
   const [selectedShortcut, setSelectedShortcut] = useState<ConversationReference | null>(null);
   const [selectedShortcutMeta, setSelectedShortcutMeta] = useState<string | null>(null);
@@ -50,6 +50,7 @@ export function SupplierMessagesPanel({
 
   async function sendMessage(formData: FormData) {
     setError(null);
+    setIsSending(true);
     formData.set("conversationId", conversationId);
 
     if (selectedShortcut) {
@@ -62,24 +63,35 @@ export function SupplierMessagesPanel({
       formData.set("referenceMetaJson", selectedShortcut.metaJson ?? selectedShortcutMeta ?? "");
     }
 
-    const response = await fetch("/api/chat/messages", {
-      method: "POST",
-      body: formData
-    });
+    try {
+      const response = await fetch("/api/chat/messages", {
+        method: "POST",
+        body: formData
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Não foi possível enviar a mensagem.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel enviar a mensagem.");
+        return;
+      }
+
+      formRef.current?.reset();
+      setSelectedShortcut(null);
+      setSelectedShortcutMeta(null);
+      setShortcutPanelOpen(false);
+      setBodyInput("");
+      router.refresh();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel enviar a mensagem.");
+    } finally {
+      setIsSending(false);
     }
+  }
 
-    formRef.current?.reset();
-    setSelectedShortcut(null);
-    setSelectedShortcutMeta(null);
-    setShortcutPanelOpen(false);
-    setBodyInput("");
-    router.refresh();
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(new FormData(event.currentTarget));
   }
 
   return (
@@ -143,7 +155,7 @@ export function SupplierMessagesPanel({
 
         <form
           ref={formRef}
-          action={(formData) => startSending(() => void sendMessage(formData))}
+          onSubmit={handleSubmit}
           className="mt-6 rounded-[1.8rem] border border-slate-200 bg-slate-50/80 p-4"
         >
           <div className="flex flex-wrap items-center gap-3">
@@ -344,6 +356,7 @@ export function SupplierMessagesPanel({
 
           <button
             type="submit"
+            disabled={isSending}
             className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white sm:w-auto"
           >
             {isSending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}

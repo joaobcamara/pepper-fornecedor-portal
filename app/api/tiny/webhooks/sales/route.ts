@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isTinyWebhookAuthorized } from "@/lib/tiny-stock-events";
 import { handleTinySalesWebhook } from "@/lib/tiny-sales-events";
+import type { TinyAccountKey } from "@/lib/tiny";
 
 async function parseWebhookPayload(request: Request) {
   const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
@@ -37,6 +38,28 @@ async function parseWebhookPayload(request: Request) {
   }
 }
 
+function getTinySalesAccountKey(request: Request): TinyAccountKey {
+  const url = new URL(request.url);
+  const rawValue =
+    request.headers.get("x-tiny-account") ??
+    request.headers.get("x-account-key") ??
+    url.searchParams.get("account") ??
+    url.searchParams.get("empresa") ??
+    "pepper";
+
+  const normalized = rawValue.trim().toLowerCase();
+
+  if (normalized === "showlook" || normalized === "show-look" || normalized === "show_look") {
+    return "showlook";
+  }
+
+  if (normalized === "onshop" || normalized === "on-shop" || normalized === "on_shopp" || normalized === "on_shop") {
+    return "onshop";
+  }
+
+  return "pepper";
+}
+
 export async function POST(request: Request) {
   if (!isTinyWebhookAuthorized(request)) {
     return NextResponse.json({ error: "Webhook nao autorizado." }, { status: 401 });
@@ -49,7 +72,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await handleTinySalesWebhook(payload);
+    const result = await handleTinySalesWebhook(payload, getTinySalesAccountKey(request));
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

@@ -10,3 +10,10 @@ coverage
 prisma/dev.db
 prisma/dev.db-journal
 tmp_*.txt
+tmp-*.json
+tmp-*.mjs
+supplier-login.json
+.local-data/
+console.log('mini-ready'))
+*.tmp
+*.tsbuildinfo

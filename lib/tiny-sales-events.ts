@@ -1,6 +1,12 @@
 import { SalesOrderStatus } from "@prisma/client";
 import { z } from "zod";
 
+import {
+  beginFoundationWebhookProcessing,
+  createFoundationSyncRun,
+  finalizeFoundationSyncRun,
+  finalizeFoundationWebhookProcessing
+} from "@/lib/foundation-event-orchestrator";
 import { prisma } from "@/lib/prisma";
 import { buildCustomerAiPackage, buildOrderContextAi, buildSalesItemContextAi } from "@/lib/sales-ai";
 import { normalizeSku } from "@/lib/sku";
@@ -715,37 +721,29 @@ async function persistSalesOrderFromAccount(
   };
 }
 
-async function logSalesWebhook(params: {
-  status: string;
-  eventType: string;
-  tinyOrderId?: string | null;
-  payload: unknown;
-  errorMessage?: string | null;
-  processedAt?: Date | null;
-}) {
-  await prisma.tinyWebhookLog.create({
-    data: {
-      webhookType: "sales",
-      eventType: params.eventType,
-      tinyProductId: params.tinyOrderId ?? null,
-      status: params.status,
-      errorMessage: params.errorMessage ?? null,
-      payload: JSON.stringify(params.payload),
-      processedAt: params.processedAt ?? null
-    }
-  });
-}
-
-export async function handleTinySalesWebhook(rawPayload: unknown) {
+export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: TinyAccountKey = "pepper") {
   const parsed = salesWebhookSchema.safeParse(rawPayload);
 
   if (!parsed.success) {
-    await logSalesWebhook({
-      status: "invalid_payload",
+    const received = await beginFoundationWebhookProcessing({
+      webhookType: "sales",
+      accountKey,
       eventType: "unknown",
-      payload: rawPayload,
-      errorMessage: "Payload de vendas invalido."
+      entityType: "sales_order",
+      payload: {
+        accountKey,
+        payload: rawPayload
+      }
     });
+
+    if (!received.duplicate) {
+      await finalizeFoundationWebhookProcessing({
+        logId: received.logId,
+        status: "invalid_payload",
+        processingStage: "failed",
+        errorMessage: "Payload de vendas invalido."
+      });
+    }
     throw new Error("Payload de vendas invalido.");
   }
 
@@ -755,33 +753,113 @@ export async function handleTinySalesWebhook(rawPayload: unknown) {
     parsed.data.dados?.idObjeto ??
     parsed.data.dados?.id ??
     parsed.data.id;
+  const scopedOrderId = buildScopedTinyId(accountKey, toStringValue(orderId));
+  const received = await beginFoundationWebhookProcessing({
+    webhookType: "sales",
+    accountKey,
+    eventType,
+    entityType: "sales_order",
+    entityId: scopedOrderId,
+    tinyProductId: scopedOrderId,
+    payload: {
+      accountKey,
+      payload: rawPayload
+    }
+  });
+
+  if (received.duplicate) {
+    return {
+      ok: true,
+      duplicate: true,
+      reason: "already_processed"
+    };
+  }
 
   if (!orderId) {
-    await logSalesWebhook({
+    await finalizeFoundationWebhookProcessing({
+      logId: received.logId,
       status: "missing_order_id",
-      eventType,
-      payload: rawPayload,
+      processingStage: "failed",
+      entityType: "sales_order",
+      entityId: scopedOrderId,
+      tinyProductId: scopedOrderId,
       errorMessage: "Webhook sem id de pedido."
     });
     throw new Error("Webhook sem id de pedido.");
   }
 
-  const order = await getTinyOrderById(String(orderId), "pepper");
-  const result = await persistSalesOrderFromAccount(order, rawPayload, eventType, "pepper");
-  const processedAt = new Date();
-
-  await logSalesWebhook({
-    status: "processed",
-    eventType,
-    tinyOrderId: result.tinyOrderId,
-    payload: rawPayload,
-    processedAt
+  const syncRun = await createFoundationSyncRun({
+    triggerType: "webhook",
+    scope: "tiny_sales",
+    status: "processing",
+    accountKey,
+    entityType: "sales_order",
+    entityId: scopedOrderId
   });
 
-  return {
-    ok: true,
-    ...result
-  };
+  try {
+    const order = await getTinyOrderById(String(orderId), accountKey);
+    const result = await persistSalesOrderFromAccount(order, rawPayload, eventType, accountKey);
+    const processedAt = new Date();
+
+    await finalizeFoundationWebhookProcessing({
+      logId: received.logId,
+      status: "processed",
+      processingStage: "persisted",
+      processedAt,
+      entityType: "sales_order",
+      entityId: result.tinyOrderId,
+      tinyProductId: result.tinyOrderId,
+      payload: {
+        accountKey,
+        payload: rawPayload,
+        derived: {
+          salesOrderId: result.salesOrderId,
+          customerId: result.customerId,
+          itemCount: result.itemCount
+        }
+      }
+    });
+    await finalizeFoundationSyncRun({
+      runId: syncRun.id,
+      status: "success",
+      metadata: {
+        accountKey,
+        salesOrderId: result.salesOrderId,
+        tinyOrderId: result.tinyOrderId,
+        itemCount: result.itemCount,
+        metricDates: result.metricDates
+      }
+    });
+
+    return {
+      ok: true,
+      ...result
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Falha ao processar webhook de vendas.";
+
+    await finalizeFoundationWebhookProcessing({
+      logId: received.logId,
+      status: "failed",
+      processingStage: "failed",
+      entityType: "sales_order",
+      entityId: scopedOrderId,
+      tinyProductId: scopedOrderId,
+      errorMessage: message
+    });
+    await finalizeFoundationSyncRun({
+      runId: syncRun.id,
+      status: "failed",
+      errorMessage: message,
+      metadata: {
+        accountKey,
+        scopedOrderId
+      }
+    });
+
+    throw error;
+  }
 }
 
 export async function reconcileTinySalesOrders(params: {

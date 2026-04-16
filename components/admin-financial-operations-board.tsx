@@ -1,12 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition } from "react";
-import { CheckCircle2, LoaderCircle, Wallet, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, LoaderCircle, UploadCloud, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import type { AdminFinancialBoardEntry } from "@/lib/supplier-financial-entries";
+import type { AdminFinancialBoardEntry } from "@/lib/supplier-financial-shared";
 import { getSupplierFinancialNextStep, getSupplierFinancialStatusTone } from "@/lib/operations-workflow";
 import { OperationsFlowPanel } from "@/components/operations-flow-panel";
+
+const ADMIN_FINANCIAL_FLASH_KEY = "admin-financial:flash";
 
 function currency(value: number) {
   return `R$ ${value.toFixed(2).replace(".", ",")}`;
@@ -17,9 +19,21 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingStatus, setPendingStatus] = useState<"IN_REVIEW" | "PENDING_PAYMENT" | "PAID" | "REJECTED" | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const raw = window.sessionStorage.getItem(ADMIN_FINANCIAL_FLASH_KEY);
+
+    if (!raw) return;
+
+    window.sessionStorage.removeItem(ADMIN_FINANCIAL_FLASH_KEY);
+    setFeedback(raw);
+  }, []);
 
   const selectedEntry = rows.find((item) => item.id === selectedEntryId) ?? null;
 
@@ -38,33 +52,59 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
 
     setFeedback(null);
     setError(null);
+    setPendingStatus(status);
 
-    const response = await fetch("/api/admin/financial-entries", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        financialEntryId: selectedEntry.id,
-        status,
-        note,
-        dueDate: dueDate || null
-      })
-    });
+    try {
+      const formData = new FormData();
+      formData.set("financialEntryId", selectedEntry.id);
+      formData.set("status", status);
+      formData.set("note", note);
+      formData.set("dueDate", dueDate);
+      if (comprovanteFile) formData.set("comprovante", comprovanteFile);
 
-    const payload = (await response.json()) as { error?: string };
+      const response = await fetch("/api/admin/financial-entries", {
+        method: "PATCH",
+        body: formData
+      });
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel atualizar o financeiro.");
-      return;
+      const payload = (await response.json()) as {
+        error?: string;
+        verification?: {
+          storedInFoundation?: boolean;
+          reflectedOnSupplierOrder?: boolean;
+          comprovanteStored?: boolean;
+        };
+      };
+
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel atualizar o financeiro.");
+        return;
+      }
+
+      const persisted =
+        payload.verification?.storedInFoundation &&
+        payload.verification?.reflectedOnSupplierOrder &&
+        payload.verification?.comprovanteStored;
+
+      window.sessionStorage.setItem(
+        ADMIN_FINANCIAL_FLASH_KEY,
+        persisted
+          ? "Financeiro atualizado, validado na fundacao e refletido no pedido do fornecedor."
+          : "Financeiro atualizado. A tela foi recarregada para validar o fluxo completo."
+      );
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel atualizar o financeiro.");
+    } finally {
+      setPendingStatus(null);
     }
-
-    setFeedback("Card financeiro atualizado com sucesso.");
-    window.location.reload();
   }
 
   function openEntry(entry: AdminFinancialBoardEntry) {
     setSelectedEntryId(entry.id);
     setNote(entry.note ?? entry.supplierNote ?? "");
     setDueDate(entry.dueDate ? entry.dueDate.split("/").reverse().join("-") : "");
+    setComprovanteFile(null);
     setFeedback(null);
     setError(null);
   }
@@ -114,9 +154,20 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
                   className="rounded-[1.6rem] border border-slate-100 bg-slate-50/80 p-4 text-left transition hover:-translate-y-0.5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{entry.productName}</p>
-                      <p className="text-xs text-slate-500">{entry.supplierName}</p>
+                    <div className="flex items-start gap-3">
+                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white bg-white shadow-sm">
+                        <Image
+                          src={entry.imageUrl ?? "/brand/pepper-logo.png"}
+                          alt={entry.productName}
+                          fill
+                          className="object-cover p-1.5"
+                          sizes="56px"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{entry.productName}</p>
+                        <p className="text-xs text-slate-500">{entry.supplierName}</p>
+                      </div>
                     </div>
                     <span className={cn("rounded-full px-3 py-1 text-[11px] font-semibold", getSupplierFinancialStatusTone(entry.status))}>
                       {entry.statusLabel}
@@ -248,39 +299,65 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
                   />
                 </label>
 
+                <label className="block rounded-[1.6rem] border border-dashed border-[#f1cdbb] bg-[#fffaf6] p-4">
+                  <span className="mb-2 block text-sm font-semibold text-slate-700">Anexar comprovante de pagamento</span>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(event) => setComprovanteFile(event.target.files?.[0] ?? null)}
+                    className="block w-full text-sm text-slate-500"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    {comprovanteFile ? (
+                      <span className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 font-semibold text-slate-700">
+                        <UploadCloud className="h-3.5 w-3.5 text-emerald-600" />
+                        {comprovanteFile.name}
+                      </span>
+                    ) : (
+                      "Opcional: envie imagem ou PDF do comprovante."
+                    )}
+                  </p>
+                </label>
+
                 {feedback ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{feedback}</div> : null}
                 {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void updateFinancial("IN_REVIEW"))}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                    disabled={pendingStatus !== null}
+                    onClick={() => void updateFinancial("IN_REVIEW")}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
-                    Em revisão
+                    {pendingStatus === "IN_REVIEW" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+                    {pendingStatus === "IN_REVIEW" ? "Salvando..." : "Em revisão"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void updateFinancial("PENDING_PAYMENT"))}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#f3a266] px-4 py-3 text-sm font-semibold text-white"
+                    disabled={pendingStatus !== null}
+                    onClick={() => void updateFinancial("PENDING_PAYMENT")}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#f3a266] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Pendente
+                    {pendingStatus === "PENDING_PAYMENT" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                    {pendingStatus === "PENDING_PAYMENT" ? "Salvando..." : "Pendente"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void updateFinancial("PAID"))}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white"
+                    disabled={pendingStatus !== null}
+                    onClick={() => void updateFinancial("PAID")}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Marcar pago
+                    {pendingStatus === "PAID" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {pendingStatus === "PAID" ? "Salvando..." : "Marcar pago"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void updateFinancial("REJECTED"))}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white"
+                    disabled={pendingStatus !== null}
+                    onClick={() => void updateFinancial("REJECTED")}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Recusar
+                    {pendingStatus === "REJECTED" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                    {pendingStatus === "REJECTED" ? "Salvando..." : "Recusar"}
                   </button>
                 </div>
 

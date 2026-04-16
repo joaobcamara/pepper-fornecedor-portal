@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { CheckCircle2, LoaderCircle, PlusCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -59,7 +59,7 @@ export function AdminUsersManager({
   });
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingTarget, setPendingTarget] = useState<"create" | string | null>(null);
 
   function updateDraft(id: string, patch: Partial<UserDraft>) {
     setDrafts((current) => ({
@@ -74,6 +74,7 @@ export function AdminUsersManager({
   async function handleCreate() {
     setFeedback(null);
     setError(null);
+    setPendingTarget("create");
 
     const response = await fetch("/api/admin/users", {
       method: "POST",
@@ -91,6 +92,7 @@ export function AdminUsersManager({
 
     if (!response.ok || !payload.userId) {
       setError(payload.error ?? "Nao foi possivel criar o usuario.");
+      setPendingTarget(null);
       return;
     }
 
@@ -125,12 +127,14 @@ export function AdminUsersManager({
       password: ""
     });
     setFeedback(`Usuario ${created.username} criado com sucesso.`);
+    setPendingTarget(null);
   }
 
   async function handleSave(row: UserRow) {
     setFeedback(null);
     setError(null);
     const draft = drafts[row.id];
+    setPendingTarget(row.id);
 
     const response = await fetch("/api/admin/users", {
       method: "PATCH",
@@ -149,6 +153,7 @@ export function AdminUsersManager({
 
     if (!response.ok) {
       setError(payload.error ?? "Nao foi possivel atualizar o usuario.");
+      setPendingTarget(null);
       return;
     }
 
@@ -175,6 +180,7 @@ export function AdminUsersManager({
       }
     }));
     setFeedback(`Usuario ${draft.username} atualizado com sucesso.`);
+    setPendingTarget(null);
   }
 
   return (
@@ -233,6 +239,11 @@ export function AdminUsersManager({
                 </option>
               ))}
             </select>
+            <span className="mt-2 block text-xs leading-5 text-slate-500">
+              {newUser.role === "SUPPLIER"
+                ? "Primeiro cadastre o fornecedor em Fornecedores. Depois volte aqui e escolha o fornecedor vinculado para liberar o acesso desse usuario ao portal."
+                : "Usuarios admin nao precisam de fornecedor vinculado."}
+            </span>
           </label>
 
           <label className="block">
@@ -248,11 +259,12 @@ export function AdminUsersManager({
 
           <button
             type="button"
-            onClick={() => startTransition(() => void handleCreate())}
-            className="mt-7 inline-flex h-fit items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
+            disabled={pendingTarget !== null}
+            onClick={() => void handleCreate()}
+            className="mt-7 inline-flex h-fit items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-            Criar
+            {pendingTarget === "create" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
+            {pendingTarget === "create" ? "Criando..." : "Criar"}
           </button>
         </div>
       </section>
@@ -331,6 +343,11 @@ export function AdminUsersManager({
                         </option>
                       ))}
                     </select>
+                    <span className="mt-2 block text-xs leading-5 text-slate-500">
+                      {draft.role === "SUPPLIER"
+                        ? "Esse usuario passa a enxergar apenas o fornecedor selecionado e os produtos vinculados a ele."
+                        : "Perfil admin atua no escopo Pepper inteiro e nao precisa de fornecedor vinculado."}
+                    </span>
                   </label>
 
                   <label className="block">
@@ -356,11 +373,12 @@ export function AdminUsersManager({
 
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void handleSave(user))}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                    disabled={pendingTarget !== null}
+                    onClick={() => void handleSave(user)}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    Salvar ajustes
+                    {pendingTarget === user.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {pendingTarget === user.id ? "Salvando..." : "Salvar ajustes"}
                   </button>
                 </div>
               </article>

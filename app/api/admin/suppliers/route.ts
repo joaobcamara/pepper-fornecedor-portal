@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createLocalSupplier, updateLocalSupplier } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
 import { getRouteSession } from "@/lib/route-session";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
 const logoSchema = z
   .string()
@@ -63,6 +65,23 @@ export async function POST(request: Request) {
   const slug = normalizeSlug(body.data.slug);
 
   try {
+    if (isLocalOperationalMode()) {
+      const supplier = await createLocalSupplier({
+        name: body.data.name.trim(),
+        slug,
+        logoUrl: body.data.logoUrl?.trim() || null,
+        contactName: body.data.contactName?.trim() || null,
+        contactPhone: body.data.contactPhone?.trim() || null,
+        contactEmail: body.data.contactEmail?.trim() || null,
+        address: body.data.address?.trim() || null,
+        active: body.data.active,
+        canViewProductValues: body.data.canViewProductValues,
+        canViewFinancialDashboard: body.data.canViewFinancialDashboard
+      });
+
+      return NextResponse.json({ ok: true, supplierId: supplier.id });
+    }
+
     const supplier = await prisma.supplier.create({
         data: {
           name: body.data.name.trim(),
@@ -111,6 +130,24 @@ export async function PATCH(request: Request) {
   const slug = normalizeSlug(body.data.slug);
 
   try {
+    if (isLocalOperationalMode()) {
+      await updateLocalSupplier({
+        id: body.data.id,
+        name: body.data.name.trim(),
+        slug,
+        logoUrl: body.data.logoUrl?.trim() || null,
+        contactName: body.data.contactName?.trim() || null,
+        contactPhone: body.data.contactPhone?.trim() || null,
+        contactEmail: body.data.contactEmail?.trim() || null,
+        address: body.data.address?.trim() || null,
+        active: body.data.active,
+        canViewProductValues: body.data.canViewProductValues,
+        canViewFinancialDashboard: body.data.canViewFinancialDashboard
+      });
+
+      return NextResponse.json({ ok: true });
+    }
+
     const supplier = await prisma.supplier.update({
       where: { id: body.data.id },
         data: {

@@ -1,5 +1,11 @@
-import { InventorySyncStatus, Prisma, ProductKind } from "@prisma/client";
+﻿import { InventorySyncStatus, Prisma, ProductKind } from "@prisma/client";
 import { syncCatalogProductByParentSku } from "@/lib/catalog-sync";
+import {
+  getPepperCatalogImportAccountKey,
+  getPepperTinyAccountLabel,
+  PEPPER_TINY_ACCOUNT_REFERENCES,
+  type PepperTinyAccountKey
+} from "@/lib/pepper-tiny-account-data";
 import { prisma } from "@/lib/prisma";
 import { getParentSku, normalizeSku, parseSku } from "@/lib/sku";
 import { getStockBand } from "@/lib/stock";
@@ -22,8 +28,16 @@ type TinySearchCandidate = {
   sku: string;
   name: string;
   variationType: string;
+  accountKey: TinyAccountKey;
+  accountLabel: string;
   parentTinyId?: string | null;
   raw: Record<string, unknown>;
+};
+
+type TinyStructureRef = {
+  id: string;
+  sku: string | null;
+  name: string | null;
 };
 
 export type TinyInspectedVariant = {
@@ -42,6 +56,9 @@ export type TinyInspectedVariant = {
 
 export type TinyInspectionResult = {
   searchedSku: string;
+  source: "tiny";
+  sourceAccountKey: InspectionSourceAccountKey;
+  sourceAccountLabel: string;
   parent: {
     id: string;
     sku: string;
@@ -69,36 +86,160 @@ export type TinyOrderSearchPage = {
   orders: TinyOrderSearchResult[];
 };
 
-export type TinyAccountKey = "pepper" | "showlook" | "onshop";
+export type TinyAccountKey = PepperTinyAccountKey;
+export type InspectionSourceAccountKey = TinyAccountKey | "foundation" | "foundation-local";
 
 const TINY_ACCOUNT_CONFIG: Array<{
   key: TinyAccountKey;
   label: string;
   tokenEnvKey: string;
-}> = [
-  {
-    key: "pepper",
-    label: "Pepper",
-    tokenEnvKey: "TINY_API_TOKEN"
-  },
-  {
-    key: "showlook",
-    label: "Show Look",
-    tokenEnvKey: "TINY_SHOWLOOK_API_TOKEN"
-  },
-  {
-    key: "onshop",
-    label: "On Shop",
-    tokenEnvKey: "TINY_ONSHOP_API_TOKEN"
+}> = PEPPER_TINY_ACCOUNT_REFERENCES.map((account) => ({
+  key: account.key,
+  label: account.label,
+  tokenEnvKey:
+    account.key === "pepper"
+      ? "TINY_API_TOKEN"
+      : account.key === "showlook"
+        ? "TINY_SHOWLOOK_API_TOKEN"
+        : "TINY_ONSHOP_API_TOKEN"
+}));
+
+type TinyThrottleState = {
+  queue: Promise<void>;
+  lastCallAt: number;
+  adaptiveMinIntervalMs: number | null;
+};
+
+const tinyThrottleByAccount = new Map<TinyAccountKey, TinyThrottleState>();
+
+function getTinyThrottleState(accountKey: TinyAccountKey) {
+  const existing = tinyThrottleByAccount.get(accountKey);
+  if (existing) {
+    return existing;
   }
-];
+
+  const created: TinyThrottleState = {
+    queue: Promise.resolve(),
+    lastCallAt: 0,
+    adaptiveMinIntervalMs: null
+  };
+  tinyThrottleByAccount.set(accountKey, created);
+  return created;
+}
+
+function getTinyConfiguredMinIntervalMs() {
+  const configured = Number(process.env.TINY_API_MIN_INTERVAL_MS ?? "");
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+
+  const targetCallsPerMinute = Number(process.env.TINY_API_TARGET_CALLS_PER_MIN ?? "80");
+  if (Number.isFinite(targetCallsPerMinute) && targetCallsPerMinute > 0) {
+    return Math.ceil(60000 / targetCallsPerMinute);
+  }
+
+  return 750;
+}
+
+function getTinyMinIntervalMs(accountKey: TinyAccountKey) {
+  const state = getTinyThrottleState(accountKey);
+  return Math.max(getTinyConfiguredMinIntervalMs(), state.adaptiveMinIntervalMs ?? 0);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTinyRequestTimeoutMs() {
+  const configured = Number(process.env.TINY_API_TIMEOUT_MS ?? "5000");
+  return Number.isFinite(configured) && configured >= 1000 ? configured : 5000;
+}
+
+function isTinyRateLimitMessage(message: string) {
+  return /excedido o numero de acessos|excesso de acessos|muitas requisicoes|too many requests|rate limit|acessos concorrentes|ultimo minuto/i.test(
+    message
+  );
+}
+
+function updateTinyAdaptiveThrottle(accountKey: TinyAccountKey, limitHeader: string | null) {
+  const parsedLimit = Number(limitHeader ?? "");
+
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    return;
+  }
+
+  const perMinuteIntervalMs = Math.ceil(60000 / parsedLimit);
+  const state = getTinyThrottleState(accountKey);
+  state.adaptiveMinIntervalMs = Math.max(300, perMinuteIntervalMs + 150);
+}
+
+function extractTinyErrorDetails(payload: TinyApiEnvelope) {
+  const errors = Array.isArray(payload.retorno?.erros) ? payload.retorno.erros : [];
+  const codes: string[] = [];
+  const messages: string[] = [];
+
+  for (const entry of errors) {
+    const record = entry as Record<string, unknown>;
+    const nestedError = typeof record.erro === "object" && record.erro ? (record.erro as Record<string, unknown>) : null;
+    const code =
+      toStringValue(record.codigo) ??
+      toStringValue(record.cod_erro) ??
+      toStringValue(record.code) ??
+      toStringValue(nestedError?.codigo);
+
+    const message =
+      toStringValue(record.erro) ??
+      toStringValue(record.mensagem) ??
+      toStringValue(record.message) ??
+      JSON.stringify(entry);
+
+    if (code) {
+      codes.push(code);
+    }
+
+    if (message) {
+      messages.push(message);
+    }
+  }
+
+  return {
+    codes,
+    message: messages.filter(Boolean).join(" | ")
+  };
+}
+
+async function runTinyCallWithThrottle<T>(accountKey: TinyAccountKey, fn: () => Promise<T>) {
+  const state = getTinyThrottleState(accountKey);
+  let releaseQueue = () => {};
+  const previousQueue = state.queue;
+  state.queue = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previousQueue;
+
+  try {
+    const elapsed = Date.now() - state.lastCallAt;
+    const waitMs = Math.max(0, getTinyMinIntervalMs(accountKey) - elapsed);
+
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
+    const result = await fn();
+    state.lastCallAt = Date.now();
+    return result;
+  } finally {
+    releaseQueue();
+  }
+}
 
 export function getConfiguredTinyAccounts() {
   return TINY_ACCOUNT_CONFIG.filter((account) => Boolean(process.env[account.tokenEnvKey]?.trim()));
 }
 
 export function getTinyAccountLabel(accountKey: TinyAccountKey) {
-  return TINY_ACCOUNT_CONFIG.find((account) => account.key === accountKey)?.label ?? accountKey;
+  return getPepperTinyAccountLabel(accountKey);
 }
 
 function getTinyToken(accountKey: TinyAccountKey = "pepper") {
@@ -107,7 +248,7 @@ function getTinyToken(accountKey: TinyAccountKey = "pepper") {
 }
 
 export function isTinyConfigured() {
-  return Boolean(getTinyToken("pepper"));
+  return Boolean(getTinyToken(getPepperCatalogImportAccountKey()));
 }
 
 export function unwrapTinyItem(value: unknown): TinyRecord {
@@ -214,6 +355,8 @@ function normalizeSearchCandidate(record: Record<string, unknown>): TinySearchCa
     sku,
     name,
     variationType: extractVariationType(record),
+    accountKey: "pepper",
+    accountLabel: getTinyAccountLabel("pepper"),
     parentTinyId: extractParentTinyId(record),
     raw: record
   };
@@ -246,6 +389,33 @@ function getVariantRefs(record: Record<string, unknown>) {
       };
     })
     .filter(Boolean) as Array<{ id?: string | null; sku?: string | null }>;
+}
+
+async function getTinyProductStructureById(id: string, accountKey: TinyAccountKey = "pepper") {
+  const payload = await callTiny("produto.obter.estrutura.php", { id }, accountKey);
+  const product = unwrapTinyItem(payload.retorno?.produto);
+  const structure = Array.isArray(product.estrutura) ? product.estrutura : [];
+
+  return structure
+    .map((entry) => {
+      const item = unwrapTinyItem(unwrapTinyItem(entry).item ?? entry);
+      const componentId =
+        toStringValue(item.id_componente) ??
+        toStringValue(item.idProdutoFilha) ??
+        toStringValue(item.idProduto) ??
+        toStringValue(item.id);
+
+      if (!componentId) {
+        return null;
+      }
+
+      return {
+        id: componentId,
+        sku: normalizeSku(toStringValue(item.codigo) ?? toStringValue(item.sku) ?? ""),
+        name: toStringValue(item.nome)
+      } satisfies TinyStructureRef;
+    })
+    .filter(Boolean) as TinyStructureRef[];
 }
 
 function extractStockQuantity(payload: TinyApiEnvelope) {
@@ -297,54 +467,111 @@ export async function callTiny(endpoint: string, params: Record<string, string>,
     throw new Error(`Configure o token Tiny da conta ${getTinyAccountLabel(accountKey)} no arquivo .env para consultar o Tiny.`);
   }
 
-  const body = new URLSearchParams({
-    token,
-    formato: "json",
-    ...params
-  });
+  let lastError: Error | null = null;
 
-  const response = await fetch(`${process.env.TINY_API_BASE_URL ?? "https://api.tiny.com.br/api2"}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body,
-    cache: "no-store"
-  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await runTinyCallWithThrottle(accountKey, async () => {
+        const body = new URLSearchParams({
+          token,
+          formato: "json",
+          ...params
+        });
 
-  if (!response.ok) {
-    throw new Error(`Falha ao consultar o Tiny (${response.status}).`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), getTinyRequestTimeoutMs());
+
+        let response: Response;
+
+        try {
+          response = await fetch(`${process.env.TINY_API_BASE_URL ?? "https://api.tiny.com.br/api2"}/${endpoint}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body,
+            cache: "no-store",
+            signal: controller.signal
+          });
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            throw new Error(
+              `Consulta ao Tiny (${getTinyAccountLabel(accountKey)}) demorou demais para responder. O sistema manteve a fundacao como fonte principal e interrompeu o fallback temporariamente.`
+            );
+          }
+
+          throw error;
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        updateTinyAdaptiveThrottle(accountKey, response.headers.get("x-limit-api"));
+
+        if (response.status === 429) {
+          throw new Error("API do Tiny bloqueou temporariamente por excesso de acessos. Aguarde e tente novamente.");
+        }
+
+        if (!response.ok) {
+          throw new Error(`Falha ao consultar o Tiny (${response.status}).`);
+        }
+
+        const payload = (await response.json()) as TinyApiEnvelope;
+        const status = payload.retorno?.status?.toUpperCase();
+        const errorDetails = extractTinyErrorDetails(payload);
+
+        if (status && status !== "OK") {
+          const errorText = errorDetails.message || "O Tiny retornou erro ao processar a solicitacao.";
+
+          if (errorDetails.codes.includes("6")) {
+            throw new Error("API do Tiny excedeu o limite de acessos no ultimo minuto. Aguarde alguns instantes e tente novamente.");
+          }
+
+          if (errorDetails.codes.includes("11")) {
+            throw new Error("API do Tiny bloqueou acessos concorrentes. O sistema vai desacelerar e tentar novamente.");
+          }
+
+          throw new Error(errorText);
+        }
+
+        return payload;
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Falha ao consultar o Tiny.");
+
+      if (!isTinyRateLimitMessage(lastError.message) || attempt === 2) {
+        break;
+      }
+
+      await sleep((attempt + 1) * 2500);
+    }
   }
 
-  const payload = (await response.json()) as TinyApiEnvelope;
-  const status = payload.retorno?.status?.toUpperCase();
-
-  if (status && status !== "OK") {
-    const errorText = payload.retorno?.erros
-      ?.map((entry) => toStringValue((entry as Record<string, unknown>).erro) ?? JSON.stringify(entry))
-      .filter(Boolean)
-      .join(" | ");
-
-    throw new Error(errorText || "O Tiny retornou erro ao processar a solicitação.");
-  }
-
-  return payload;
+  throw lastError ?? new Error("Falha ao consultar o Tiny.");
 }
 
-export async function searchTinyProductsBySku(sku: string) {
+export async function searchTinyProductsBySku(sku: string, accountKey: TinyAccountKey = "pepper") {
   const payload = await callTiny("produtos.pesquisa.php", {
     pesquisa: normalizeSku(sku)
-  }, "pepper");
+  }, accountKey);
 
   const products = Array.isArray(payload.retorno?.produtos) ? payload.retorno.produtos : [];
 
   return products
-    .map((entry) => normalizeSearchCandidate(unwrapTinyItem(entry)))
+    .map((entry) => {
+      const candidate = normalizeSearchCandidate(unwrapTinyItem(entry));
+      return candidate
+        ? {
+            ...candidate,
+            accountKey,
+            accountLabel: getTinyAccountLabel(accountKey)
+          }
+        : null;
+    })
     .filter(Boolean) as TinySearchCandidate[];
 }
 
-async function getTinyProductById(id: string) {
-  const payload = await callTiny("produto.obter.php", { id }, "pepper");
+async function getTinyProductById(id: string, accountKey: TinyAccountKey = "pepper") {
+  const payload = await callTiny("produto.obter.php", { id }, accountKey);
   return unwrapTinyItem(payload.retorno?.produto);
 }
 
@@ -427,13 +654,13 @@ export async function getTinyContactById(id: string, accountKey: TinyAccountKey 
   return unwrapTinyItem(payload.retorno?.contato);
 }
 
-export async function getTinyStockByProductId(id: string) {
-  const payload = await callTiny("produto.obter.estoque.php", { id }, "pepper");
+export async function getTinyStockByProductId(id: string, accountKey: TinyAccountKey = "pepper") {
+  const payload = await callTiny("produto.obter.estoque.php", { id }, accountKey);
   return extractStockQuantity(payload);
 }
 
 async function resolveParentProduct(candidate: TinySearchCandidate) {
-  const detail = await getTinyProductById(candidate.id);
+  const detail = await getTinyProductById(candidate.id, candidate.accountKey);
   const variationType = extractVariationType(detail).toUpperCase();
 
   if (variationType === "P" || candidate.sku === getParentSku(candidate.sku)) {
@@ -445,7 +672,7 @@ async function resolveParentProduct(candidate: TinySearchCandidate) {
 
   const parentTinyId = extractParentTinyId(detail) ?? candidate.parentTinyId;
   if (parentTinyId) {
-    const parent = await getTinyProductById(parentTinyId);
+    const parent = await getTinyProductById(parentTinyId, candidate.accountKey);
     return {
       parent,
       selectedDetail: detail
@@ -454,11 +681,11 @@ async function resolveParentProduct(candidate: TinySearchCandidate) {
 
   const fallbackParentSku = getParentSku(candidate.sku);
   if (fallbackParentSku) {
-    const parentMatches = await searchTinyProductsBySku(fallbackParentSku);
-    const exactParent = parentMatches.find((entry) => entry.sku === fallbackParentSku);
+    const parentMatches = await searchTinyProductsBySku(fallbackParentSku, candidate.accountKey);
+    const exactParent = parentMatches.find((entry) => entry.sku === fallbackParentSku && entry.accountKey === candidate.accountKey);
 
     if (exactParent) {
-      const parent = await getTinyProductById(exactParent.id);
+      const parent = await getTinyProductById(exactParent.id, candidate.accountKey);
       return {
         parent,
         selectedDetail: detail
@@ -501,35 +728,63 @@ function buildVariantFromDetail(detail: Record<string, unknown>, fallbackImage?:
 
 export async function inspectTinyProductBySku(inputSku: string): Promise<TinyInspectionResult> {
   const sku = normalizeSku(inputSku);
-  const searchResults = await searchTinyProductsBySku(sku);
-  const exactMatch = searchResults.find((entry) => entry.sku === sku);
+  const parentSku = getParentSku(sku) || sku;
+  const parentSearchResults = await searchTinyProductsBySku(parentSku, "pepper");
+  const directSearchResults = sku === parentSku ? parentSearchResults : await searchTinyProductsBySku(sku, "pepper");
+  const exactParent = parentSearchResults.find((entry) => entry.sku === parentSku);
+  const exactMatch = directSearchResults.find((entry) => entry.sku === sku);
+  const searchResults = [...parentSearchResults, ...directSearchResults].filter(
+    (entry, index, array) => array.findIndex((candidate) => candidate.sku === entry.sku) === index
+  );
 
-  if (!exactMatch) {
+  if (!exactParent && !exactMatch) {
     throw new Error(
       searchResults.length
-        ? "Não encontrei um match exato por SKU. Revise o código e escolha um dos resultados sugeridos."
+        ? "NÃ£o encontrei um match exato por SKU. Revise o cÃ³digo e escolha um dos resultados sugeridos."
         : "Nenhum produto encontrado no Tiny para esse SKU."
     );
   }
 
-  const { parent, selectedDetail } = await resolveParentProduct(exactMatch);
-  const parentSku = normalizeSku(toStringValue(parent.codigo) ?? exactMatch.sku);
+  const resolved =
+    exactParent
+      ? {
+          parent: await getTinyProductById(exactParent.id, "pepper"),
+          selectedDetail:
+            exactMatch && exactMatch.id !== exactParent.id
+              ? await getTinyProductById(exactMatch.id, "pepper")
+              : await getTinyProductById(exactParent.id, "pepper")
+        }
+      : await resolveParentProduct(exactMatch!);
+
+  const { parent, selectedDetail } = resolved;
+  const resolvedParentSku = normalizeSku(toStringValue(parent.codigo) ?? exactParent?.sku ?? exactMatch?.sku ?? parentSku);
+  const resolvedParentName = toStringValue(parent.nome) ?? exactParent?.name ?? exactMatch?.name ?? resolvedParentSku;
   const parentImage = extractImageUrl(parent);
-  const variationRefs = getVariantRefs(parent);
-  const parsedParentSku = parseSku(parentSku);
+  const resolvedParentId = toStringValue(parent.id) ?? exactParent?.id ?? exactMatch?.id;
+  const structureRefs = resolvedParentId
+    ? await getTinyProductStructureById(resolvedParentId, "pepper").catch(() => [])
+    : [];
+  const variationRefs =
+    structureRefs.length > 0
+      ? structureRefs.map((entry) => ({
+          id: entry.id,
+          sku: entry.sku
+        }))
+      : getVariantRefs(parent);
+  const parsedParentSku = parseSku(resolvedParentSku);
 
   const variantDetails =
     variationRefs.length > 0
       ? await Promise.all(
           variationRefs.map(async (entry) => {
             if (entry.id) {
-              return getTinyProductById(entry.id);
+              return getTinyProductById(entry.id, "pepper");
             }
 
             if (entry.sku) {
-              const matches = await searchTinyProductsBySku(entry.sku);
+              const matches = await searchTinyProductsBySku(entry.sku, "pepper");
               const exact = matches.find((item) => item.sku === entry.sku);
-              return exact ? getTinyProductById(exact.id) : null;
+              return exact ? getTinyProductById(exact.id, "pepper") : null;
             }
 
             return null;
@@ -548,7 +803,7 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
             return null;
           }
 
-          const quantity = await getTinyStockByProductId(variant.id);
+          const quantity = await getTinyStockByProductId(variant.id, "pepper");
           return {
             ...variant,
             quantity,
@@ -559,11 +814,11 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
   ).filter(Boolean) as TinyInspectedVariant[];
 
   if (variants.length === 0 && parsedParentSku) {
-    const quantity = await getTinyStockByProductId(toStringValue(parent.id) ?? exactMatch.id);
+    const quantity = resolvedParentId ? await getTinyStockByProductId(resolvedParentId, "pepper") : null;
     variants.push({
-      id: toStringValue(parent.id) ?? exactMatch.id,
-      sku: parentSku,
-      name: toStringValue(parent.nome) ?? exactMatch.name,
+      id: resolvedParentId ?? resolvedParentSku,
+      sku: resolvedParentSku,
+      name: resolvedParentName,
       sizeCode: parsedParentSku.sizeCode,
       colorCode: parsedParentSku.colorCode,
       quantityCode: parsedParentSku.quantityCode,
@@ -577,10 +832,13 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
 
   return {
     searchedSku: sku,
+    source: "tiny",
+    sourceAccountKey: "pepper",
+    sourceAccountLabel: getTinyAccountLabel("pepper"),
     parent: {
-      id: toStringValue(parent.id) ?? exactMatch.id,
-      sku: parentSku,
-      name: toStringValue(parent.nome) ?? exactMatch.name,
+      id: resolvedParentId ?? resolvedParentSku,
+      sku: resolvedParentSku,
+      name: resolvedParentName,
       imageUrl: parentImage
     },
     variants,
@@ -601,7 +859,7 @@ export async function importTinyProductBySku(params: {
       data: {
         status: "processing",
         importedByUserId: params.actorUserId,
-        notes: `Importação por SKU ${inspection.searchedSku}`
+        notes: `ImportaÃ§Ã£o por SKU ${inspection.searchedSku}`
       }
     });
 
@@ -776,3 +1034,4 @@ export async function importTinyProductBySku(params: {
     };
   });
 }
+

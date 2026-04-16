@@ -1,6 +1,7 @@
 import { InventorySyncStatus, Prisma, PrismaClient, ProductKind } from "@prisma/client";
 
 import { buildCatalogAiPackage } from "@/lib/catalog-ai";
+import { getPepperCatalogImportAccountKey } from "@/lib/pepper-tiny-account-data";
 import { getColorLabel, getSizeLabel } from "@/lib/sku";
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
@@ -171,6 +172,7 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
   if (parent.tinyProductId) {
     await db.catalogTinyMapping.create({
       data: {
+        accountKey: getPepperCatalogImportAccountKey(),
         entityType: "product",
         catalogProductId: catalogProduct.id,
         sku: parent.sku,
@@ -247,6 +249,7 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
     if (variant.tinyProductId) {
       await db.catalogTinyMapping.create({
         data: {
+          accountKey: getPepperCatalogImportAccountKey(),
           entityType: "variant",
           catalogProductId: catalogProduct.id,
           catalogVariantId: catalogVariant.id,

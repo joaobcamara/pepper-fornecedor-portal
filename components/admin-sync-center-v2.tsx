@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCcw, Webhook } from "lucide-react";
 
@@ -37,20 +37,63 @@ type SyncSummary = {
   lastWebhookAt: string | null;
 };
 
+type FoundationAccountHealth = {
+  accountKey: string;
+  label: string;
+  orderCount: number;
+  lastOrderAt: string | null;
+};
+
+type FoundationRecentSalesOrder = {
+  id: string;
+  accountLabel: string;
+  number: string | null;
+  ecommerceNumber: string | null;
+  statusLabel: string | null;
+  marketplace: string | null;
+  totalAmount: number | null;
+  orderDate: string | null;
+  itemCount: number;
+};
+
+type FoundationHealth = {
+  catalogProductCount: number;
+  catalogVariantCount: number;
+  inventoryVariantCount: number;
+  salesOrderCount: number;
+  salesItemCount: number;
+  variantMetricCount: number;
+  productMetricCount: number;
+  supplierMetricCount: number;
+  lastStockSyncAt: string | null;
+  lastStockSku: string | null;
+  lastStockProductName: string | null;
+  lastSalesOrderAt: string | null;
+  lastSalesOrderNumber: string | null;
+  lastSalesOrderAccountLabel: string | null;
+  lastMetricDate: string | null;
+  lastMetricSku: string | null;
+  lastMetricProductName: string | null;
+  salesOrdersByAccount: FoundationAccountHealth[];
+  recentSalesOrders: FoundationRecentSalesOrder[];
+  note: string;
+};
+
 export function AdminSyncCenterV2({
   summary,
   syncRuns,
-  webhookLogs
+  webhookLogs,
+  foundationHealth
 }: {
   summary: SyncSummary;
   syncRuns: SyncRunRow[];
   webhookLogs: WebhookRow[];
+  foundationHealth: FoundationHealth | null;
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeAction, setActiveAction] = useState<"inventory" | "sales" | null>(null);
-  const [isPending, startTransition] = useTransition();
 
   async function reconcileInventoryNow() {
     setFeedback(null);
@@ -146,6 +189,24 @@ export function AdminSyncCenterV2({
     router.refresh();
   }
 
+  async function runInventoryReconciliation() {
+    setActiveAction("inventory");
+    try {
+      await reconcileInventoryNow();
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function runSalesImport() {
+    setActiveAction("sales");
+    try {
+      await importSalesNow();
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -189,38 +250,30 @@ export function AdminSyncCenterV2({
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() =>
-                startTransition(() => {
-                  setActiveAction("inventory");
-                  void reconcileInventoryNow().finally(() => setActiveAction(null));
-                })
-              }
-              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
+              disabled={activeAction !== null}
+              onClick={() => void runInventoryReconciliation()}
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isPending && activeAction === "inventory" ? (
+              {activeAction === "inventory" ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              {isPending && activeAction === "inventory" ? "Reconciliando..." : "Executar reconciliacao de estoque"}
+              {activeAction === "inventory" ? "Reconciliando..." : "Executar reconciliacao de estoque"}
             </button>
 
             <button
               type="button"
-              onClick={() =>
-                startTransition(() => {
-                  setActiveAction("sales");
-                  void importSalesNow().finally(() => setActiveAction(null));
-                })
-              }
-              className="inline-flex items-center gap-2 rounded-2xl border border-[#f0d4c2] bg-[#fff8f3] px-5 py-3 text-sm font-semibold text-[#a94b25] shadow-soft"
+              disabled={activeAction !== null}
+              onClick={() => void runSalesImport()}
+              className="inline-flex items-center gap-2 rounded-2xl border border-[#f0d4c2] bg-[#fff8f3] px-5 py-3 text-sm font-semibold text-[#a94b25] shadow-soft disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isPending && activeAction === "sales" ? (
+              {activeAction === "sales" ? (
                 <LoaderCircle className="h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCcw className="h-4 w-4" />
               )}
-              {isPending && activeAction === "sales" ? "Importando vendas..." : "Importar vendas 30 dias"}
+              {activeAction === "sales" ? "Importando vendas..." : "Importar vendas 30 dias"}
             </button>
           </div>
         </section>
@@ -243,6 +296,148 @@ export function AdminSyncCenterV2({
             <li>Webhook de vendas atualiza cliente, pedido, itens e metricas diarias.</li>
             <li>Importacao manual de 30 dias soma Pepper, Show Look e On Shop para o giro compartilhado do deposito.</li>
             <li>A reconciliacao continua como rede de seguranca para manter consistencia.</li>
+          </ul>
+        </section>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Fundacao comercial</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Visao rapida do que ja esta consolidado na camada oficial de catalogo, estoque, pedidos e metricas.
+              </p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Supabase-first</span>
+          </div>
+
+          {foundationHealth ? (
+            <>
+              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <InfoBox label="Produtos de catalogo" value={foundationHealth.catalogProductCount.toString()} />
+                <InfoBox label="Variacoes" value={foundationHealth.catalogVariantCount.toString()} />
+                <InfoBox label="Estoque sincronizado" value={foundationHealth.inventoryVariantCount.toString()} />
+                <InfoBox label="Pedidos comerciais" value={foundationHealth.salesOrderCount.toString()} />
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <InfoBox label="Itens de pedido" value={foundationHealth.salesItemCount.toString()} />
+                <InfoBox label="Metricas por variacao" value={foundationHealth.variantMetricCount.toString()} />
+                <InfoBox
+                  label="Metricas produto / fornecedor"
+                  value={`${foundationHealth.productMetricCount} / ${foundationHealth.supplierMetricCount}`}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <InfoBox
+                  label="Ultimo estoque"
+                  value={
+                    foundationHealth.lastStockSyncAt
+                      ? `${foundationHealth.lastStockSyncAt}${foundationHealth.lastStockSku ? ` · ${foundationHealth.lastStockSku}` : ""}`
+                      : "Sem sincronizacao recente"
+                  }
+                />
+                <InfoBox
+                  label="Ultimo pedido"
+                  value={
+                    foundationHealth.lastSalesOrderAt
+                      ? `${foundationHealth.lastSalesOrderAt}${foundationHealth.lastSalesOrderNumber ? ` · ${foundationHealth.lastSalesOrderNumber}` : ""}`
+                      : "Sem pedido consolidado"
+                  }
+                />
+                <InfoBox
+                  label="Ultima metrica"
+                  value={
+                    foundationHealth.lastMetricDate
+                      ? `${foundationHealth.lastMetricDate}${foundationHealth.lastMetricSku ? ` · ${foundationHealth.lastMetricSku}` : ""}`
+                      : "Sem metrica diaria"
+                  }
+                />
+              </div>
+
+              <div className="mt-5 rounded-[1.4rem] border border-[#f0d4c2] bg-[#fff8f3] px-4 py-4 text-sm leading-6 text-slate-600">
+                {foundationHealth.note}
+              </div>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+                <div className="rounded-[1.4rem] border border-slate-100 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Contas Tiny</p>
+                  <div className="mt-4 space-y-3">
+                    {foundationHealth.salesOrdersByAccount.map((account) => (
+                      <div key={account.accountKey} className="rounded-2xl border border-white bg-white px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-900">{account.label}</p>
+                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {account.orderCount} pedidos
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-500">
+                          {account.lastOrderAt ? `Ultimo pedido em ${account.lastOrderAt}` : "Sem pedido consolidado ainda"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[1.4rem] border border-slate-100 bg-slate-50/80 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Pedidos recentes da fundacao</p>
+                  <div className="mt-4 space-y-3">
+                    {foundationHealth.recentSalesOrders.length > 0 ? (
+                      foundationHealth.recentSalesOrders.map((order) => (
+                        <div key={order.id} className="rounded-2xl border border-white bg-white px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">
+                                {order.number ?? order.ecommerceNumber ?? "Pedido sem numero"}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {order.accountLabel}
+                                {order.marketplace ? ` · ${order.marketplace}` : ""}
+                                {order.orderDate ? ` · ${order.orderDate}` : ""}
+                              </p>
+                            </div>
+                            <StatusBadge status={order.statusLabel ? "processed" : "processing"}>
+                              {order.statusLabel ?? "Sem status"}
+                            </StatusBadge>
+                          </div>
+                          <p className="mt-3 text-xs text-slate-500">
+                            {order.itemCount} itens
+                            {order.totalAmount != null ? ` · Total R$ ${order.totalAmount.toFixed(2).replace(".", ",")}` : ""}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyState label="Nenhum pedido comercial consolidado ainda." />
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <EmptyState label="Nao foi possivel carregar o resumo da fundacao agora." />
+          )}
+        </section>
+
+        <section className="rounded-[2rem] border border-[#f0d4c2] bg-[#fff8f3] p-6 shadow-soft">
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl bg-white p-3 text-[#c75f2d]">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Como ler este painel</h2>
+              <p className="text-sm text-slate-500">
+                Use esta leitura para validar se a fundacao esta pronta para abastecer Pepper IA, operacao e sistemas futuros.
+              </p>
+            </div>
+          </div>
+
+          <ul className="mt-5 space-y-3 text-sm leading-6 text-slate-600">
+            <li>Produtos e variacoes oficiais vivem em CatalogProduct, CatalogVariant, CatalogInventory e CatalogTinyMapping.</li>
+            <li>Pedidos e metricas precisam crescer aqui para a Pepper IA deixar de depender de fallback e ganhar precisao real.</li>
+            <li>Se houver estoque recente, mas nenhum pedido ou metrica, a fundacao esta boa para operacao, mas ainda fraca para inteligencia comercial.</li>
+            <li>As tres contas Tiny devem aparecer refletidas por SKU e por pedidos; Pepper segue matriz, Show Look e On Shop alimentam vendas do grupo.</li>
           </ul>
         </section>
       </section>
@@ -366,7 +561,7 @@ function InfoBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, children }: { status: string; children?: ReactNode }) {
   return (
     <span
       className={cn(
@@ -381,7 +576,7 @@ function StatusBadge({ status }: { status: string }) {
         status === "variant_not_found" && "bg-amber-50 text-amber-700"
       )}
     >
-      {status}
+      {children ?? status}
     </span>
   );
 }

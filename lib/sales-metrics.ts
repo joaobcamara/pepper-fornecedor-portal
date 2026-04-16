@@ -17,7 +17,48 @@ export function getDateWindows(now = new Date()) {
     today,
     tomorrow: addDays(today, 1),
     sevenDaysAgo: addDays(today, -6),
-    thirtyDaysAgo: addDays(today, -29)
+    thirtyDaysAgo: addDays(today, -29),
+    ninetyDaysAgo: addDays(today, -89),
+    oneEightyDaysAgo: addDays(today, -179),
+    oneYearAgo: addDays(today, -364)
+  };
+}
+
+export type SalesPeriodKey = "1d" | "7d" | "1m" | "3m" | "6m" | "1a";
+
+export const SALES_PERIOD_OPTIONS: Array<{ key: SalesPeriodKey; label: string }> = [
+  { key: "1d", label: "1D" },
+  { key: "7d", label: "7D" },
+  { key: "1m", label: "1M" },
+  { key: "3m", label: "3M" },
+  { key: "6m", label: "6M" },
+  { key: "1a", label: "1A" }
+];
+
+export type SalesPeriodTotals = Record<SalesPeriodKey, number>;
+
+export const EMPTY_SALES_PERIOD_TOTALS: SalesPeriodTotals = {
+  "1d": 0,
+  "7d": 0,
+  "1m": 0,
+  "3m": 0,
+  "6m": 0,
+  "1a": 0
+};
+
+export function buildSalesPeriodTotals<T extends { date: Date; unitsSold: number }>(
+  metrics: T[],
+  now = new Date()
+): SalesPeriodTotals {
+  const windows = getDateWindows(now);
+
+  return {
+    "1d": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.today && metric.date < windows.tomorrow).map((metric) => metric.unitsSold))),
+    "7d": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.sevenDaysAgo).map((metric) => metric.unitsSold))),
+    "1m": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.thirtyDaysAgo).map((metric) => metric.unitsSold))),
+    "3m": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.ninetyDaysAgo).map((metric) => metric.unitsSold))),
+    "6m": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.oneEightyDaysAgo).map((metric) => metric.unitsSold))),
+    "1a": Number(sumNumbers(metrics.filter((metric) => metric.date >= windows.oneYearAgo).map((metric) => metric.unitsSold)))
   };
 }
 

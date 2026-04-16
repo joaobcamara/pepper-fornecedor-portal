@@ -1,8 +1,11 @@
 import { redirect } from "next/navigation";
 import { AdminSuppliersManagerV2 as AdminSuppliersManager } from "@/components/admin-suppliers-manager-v2";
 import { AdminShellV2 as AdminShell } from "@/components/admin-shell-v2";
+import { getDemoSupplierDirectory } from "@/lib/demo-data";
+import { getLocalSupplierDirectory } from "@/lib/local-operations-store";
 import { getCurrentSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
 export default async function AdminSuppliersPage() {
   const session = await getCurrentSession();
@@ -11,38 +14,41 @@ export default async function AdminSuppliersPage() {
     redirect("/login?next=/admin/fornecedores");
   }
 
-  const suppliers = await prisma.supplier
-    .findMany({
-      include: {
-        assignments: {
-          where: {
-            active: true
+  const supplierUsage = isLocalOperationalMode()
+    ? await getLocalSupplierDirectory()
+    : await prisma.supplier
+        .findMany({
+          include: {
+            assignments: {
+              where: {
+                active: true
+              }
+            },
+            users: true
+          },
+          orderBy: {
+            createdAt: "desc"
           }
-        },
-        users: true
-      },
-      orderBy: {
-        createdAt: "desc"
-      }
-    })
-    .catch(() => []);
-
-  const supplierUsage = suppliers.map((supplier) => ({
-    id: supplier.id,
-    name: supplier.name,
-    slug: supplier.slug,
-    logoUrl: supplier.logoUrl ?? null,
-    contactName: supplier.contactName ?? null,
-    contactPhone: supplier.contactPhone ?? null,
-    contactEmail: supplier.contactEmail ?? null,
-    address: supplier.address ?? null,
-    active: supplier.active,
-    canViewProductValues: supplier.canViewProductValues,
-    canViewFinancialDashboard: supplier.canViewFinancialDashboard,
-    productCount: new Set(supplier.assignments.map((assignment) => assignment.productId)).size,
-    userCount: supplier.users.length,
-    createdAt: supplier.createdAt.toLocaleDateString("pt-BR")
-  }));
+        })
+        .then((suppliers) =>
+          suppliers.map((supplier) => ({
+            id: supplier.id,
+            name: supplier.name,
+            slug: supplier.slug,
+            logoUrl: supplier.logoUrl ?? null,
+            contactName: supplier.contactName ?? null,
+            contactPhone: supplier.contactPhone ?? null,
+            contactEmail: supplier.contactEmail ?? null,
+            address: supplier.address ?? null,
+            active: supplier.active,
+            canViewProductValues: supplier.canViewProductValues,
+            canViewFinancialDashboard: supplier.canViewFinancialDashboard,
+            productCount: new Set(supplier.assignments.map((assignment) => assignment.productId)).size,
+            userCount: supplier.users.length,
+            createdAt: supplier.createdAt.toLocaleDateString("pt-BR")
+          }))
+        )
+        .catch(() => getDemoSupplierDirectory());
   const inactiveCount = supplierUsage.filter((supplier) => !supplier.active).length;
   const withoutProductsCount = supplierUsage.filter((supplier) => supplier.productCount === 0).length;
   const hiddenFinancialCount = supplierUsage.filter((supplier) => !supplier.canViewFinancialDashboard).length;

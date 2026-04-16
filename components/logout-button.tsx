@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 
@@ -12,21 +12,25 @@ export function LogoutButton({
   label?: string;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
 
   async function handleLogout() {
-    const response = await fetch("/api/auth/logout", {
-      method: "POST"
-    });
+    setIsPending(true);
 
-    if (!response.ok) {
-      return;
-    }
+    try {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST"
+      });
 
-    startTransition(() => {
+      if (!response.ok) {
+        return;
+      }
+
       router.push("/login");
       router.refresh();
-    });
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (

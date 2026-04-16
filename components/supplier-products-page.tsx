@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, PackageSearch, RefreshCcw, Search, ShoppingCart, X } from "lucide-react";
 
@@ -134,7 +134,7 @@ export function SupplierProductsPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [isRefreshing, startRefreshTransition] = useTransition();
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const visibleProducts = useMemo(() => {
     return products.filter((product) => {
@@ -150,22 +150,29 @@ export function SupplierProductsPage({
   async function handleRefresh() {
     setSyncMessage(null);
     setSyncError(null);
+    setIsRefreshing(true);
 
-    const response = await fetch("/api/supplier/sync", { method: "POST" });
-    const payload = (await response.json()) as { error?: string; status?: string; updated?: number; stale?: number };
+    try {
+      const response = await fetch("/api/supplier/sync", { method: "POST" });
+      const payload = (await response.json()) as { error?: string; status?: string; updated?: number; stale?: number };
 
-    if (!response.ok) {
-      setSyncError(payload.error ?? "Nao foi possivel sincronizar agora.");
-      return;
+      if (!response.ok) {
+        setSyncError(payload.error ?? "Nao foi possivel sincronizar agora.");
+        return;
+      }
+
+      setSyncMessage(
+        payload.status === "completed"
+          ? `Sincronizacao concluida com ${payload.updated ?? 0} variacoes atualizadas.`
+          : `Sincronizacao finalizada com fallback em ${payload.stale ?? 0} variacoes.`
+      );
+
+      router.refresh();
+    } catch (requestError) {
+      setSyncError(requestError instanceof Error ? requestError.message : "Nao foi possivel sincronizar agora.");
+    } finally {
+      setIsRefreshing(false);
     }
-
-    setSyncMessage(
-      payload.status === "completed"
-        ? `Sincronizacao concluida com ${payload.updated ?? 0} variacoes atualizadas.`
-        : `Sincronizacao finalizada com fallback em ${payload.stale ?? 0} variacoes.`
-    );
-
-    router.refresh();
   }
 
   return (
@@ -263,8 +270,9 @@ export function SupplierProductsPage({
               </label>
               <button
                 type="button"
-                onClick={() => startRefreshTransition(() => void handleRefresh())}
-                className="inline-flex h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/50 sm:w-auto"
+                disabled={isRefreshing}
+                onClick={() => void handleRefresh()}
+                className="inline-flex h-[3.25rem] w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
                 <RefreshCcw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
                 {isRefreshing ? "Sincronizando" : "Atualizar"}
@@ -463,7 +471,7 @@ function ProductModal({
 }) {
   const [note, setNote] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
-  const [isSubmitting, startSubmitting] = useTransition();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const sizes = Array.from(new Set(product.matrix.flatMap((row) => row.items.map((item) => item.size))));
@@ -497,41 +505,48 @@ function ProductModal({
   async function submitReplenishmentRequest() {
     setError(null);
     setMessage(null);
+    setIsSubmitting(true);
 
-    const variants = product.matrix.flatMap((row) =>
-      row.items.map((item) => ({
-        sku: item.sku,
-        size: item.size,
-        color: row.color,
-        currentStock: item.quantity,
-        requestedQuantity: quantities[item.sku] ?? 0
-      }))
-    );
+    try {
+      const variants = product.matrix.flatMap((row) =>
+        row.items.map((item) => ({
+          sku: item.sku,
+          size: item.size,
+          color: row.color,
+          currentStock: item.quantity,
+          requestedQuantity: quantities[item.sku] ?? 0
+        }))
+      );
 
-    const response = await fetch("/api/supplier/replenishment-requests", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        supplierName: product.supplier,
-        productName: product.name,
-        productSku: product.sku,
-        imageUrl: product.imageUrl,
-        note,
-        variants
-      })
-    });
+      const response = await fetch("/api/supplier/replenishment-requests", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          supplierName: product.supplier,
+          productName: product.name,
+          productSku: product.sku,
+          imageUrl: product.imageUrl,
+          note,
+          variants
+        })
+      });
 
-    const payload = (await response.json()) as { error?: string; requestId?: string };
+      const payload = (await response.json()) as { error?: string; requestId?: string };
 
-    if (!response.ok || !payload.requestId) {
-      setError(payload.error ?? "Nao foi possivel enviar a solicitacao de reposicao.");
-      return;
+      if (!response.ok || !payload.requestId) {
+        setError(payload.error ?? "Nao foi possivel enviar a solicitacao de reposicao.");
+        return;
+      }
+      setQuantities({});
+      setNote("");
+      setMessage("Solicitacao enviada com sucesso. A Pepper vai analisar e aprovar a compra internamente.");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel enviar a solicitacao de reposicao.");
+    } finally {
+      setIsSubmitting(false);
     }
-    setQuantities({});
-    setNote("");
-    setMessage("Solicitacao enviada com sucesso. A Pepper vai analisar e aprovar a compra internamente.");
   }
 
   return (
@@ -769,10 +784,11 @@ function ProductModal({
 
               <button
                 type="button"
-                onClick={() => startSubmitting(() => void submitReplenishmentRequest())}
-                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#ec6232] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ffb391] sm:w-auto"
+                disabled={isSubmitting}
+                onClick={() => void submitReplenishmentRequest()}
+                className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#ec6232] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ffb391] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
               >
-                <ShoppingCart className="h-4 w-4" />
+                {isSubmitting ? <RefreshCcw className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
                 {isSubmitting ? "Enviando..." : "Enviar para aprovacao"}
               </button>
             </div>

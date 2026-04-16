@@ -1,8 +1,10 @@
 import { OperationalCardOriginType, SupplierOrderStatus, SupplierOrderWorkflowStage } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { createLocalAdminSupplierOrder, getLocalReplenishmentRequests, updateLocalReplenishmentRequest } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
 import { getRouteSession } from "@/lib/route-session";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
 const patchSchema = z.object({
   id: z.string().min(1),
@@ -32,6 +34,54 @@ export async function PATCH(request: Request) {
 
     if (!payload.success) {
       return NextResponse.json({ error: "Dados invalidos para atualizar a solicitacao." }, { status: 400 });
+    }
+
+    if (isLocalOperationalMode()) {
+      const requests = await getLocalReplenishmentRequests();
+      const existing = requests.find((item) => item.id === payload.data.id);
+
+      if (!existing) {
+        return NextResponse.json({ error: "Solicitacao nao encontrada." }, { status: 404 });
+      }
+
+      const updated = await updateLocalReplenishmentRequest({
+        requestId: payload.data.id,
+        status: payload.data.status,
+        reviewedByUserId: session.userId,
+        reviewedByUsername: session.username
+      });
+
+      let linkedOrderId: string | null = existing.linkedOrderId ?? null;
+
+      if (payload.data.status === "APPROVED" && !existing.linkedOrderId) {
+        const order = await createLocalAdminSupplierOrder({
+          supplierId: updated.supplierId,
+          productId: updated.productId,
+          originReferenceId: updated.id,
+          productName: updated.productName,
+          productSku: updated.productSku,
+          imageUrl: updated.imageUrl,
+          adminNote: updated.note || "Pedido criado automaticamente a partir de uma sugestao de compra aprovada.",
+          actorUsername: session.username,
+          items: updated.items.map((item) => ({
+            sku: item.sku,
+            productName: updated.productName,
+            color: item.color,
+            size: item.size,
+            requestedQuantity: item.requestedQuantity,
+            unitCost: 0
+          }))
+        });
+        linkedOrderId = order.id;
+      }
+
+      return NextResponse.json({
+        ok: true,
+        verification: {
+          storedInFoundation: true,
+          linkedOrderCreated: payload.data.status !== "APPROVED" || Boolean(linkedOrderId)
+        }
+      });
     }
 
     const updated = await prisma.replenishmentRequest.update({

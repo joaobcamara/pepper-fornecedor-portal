@@ -1,4 +1,6 @@
+import { getLocalSupplierIdentity } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
 function buildInitials(name: string) {
   const parts = name
@@ -22,6 +24,10 @@ function getDemoSupplierIdentity() {
 
 export async function getSupplierIdentity(supplierId?: string | null) {
   const allowDemoIdentity = process.env.ALLOW_DEMO_AUTH === "true";
+
+  if (isLocalOperationalMode()) {
+    return getLocalSupplierIdentity(supplierId);
+  }
 
   if (!supplierId) {
     return allowDemoIdentity

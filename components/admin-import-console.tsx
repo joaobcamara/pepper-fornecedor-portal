@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
-import { useMemo, useState, useTransition } from "react";
+import Image from "next/image";
+import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, DatabaseZap, LoaderCircle, Search } from "lucide-react";
 import { formatVariantLabel, getColorLabel, getSizeLabel } from "@/lib/sku";
 import { cn } from "@/lib/cn";
@@ -13,6 +14,9 @@ type SupplierOption = {
 
 type InspectionResult = {
   searchedSku: string;
+  source?: "foundation" | "tiny";
+  sourceAccountKey?: string | null;
+  sourceAccountLabel?: string | null;
   parent: {
     id: string;
     sku: string;
@@ -39,6 +43,14 @@ type ImportResult = {
   batchId: string;
   importedVariants: number;
   parentSku: string;
+  source?: "foundation" | "tiny";
+  sourceAccountKey?: string | null;
+  sourceAccountLabel?: string | null;
+  verification?: {
+    storedInFoundation: boolean;
+    visibleInAdminProducts: boolean;
+    visibleForSupplier: boolean;
+  };
 };
 
 export function AdminImportConsole({
@@ -53,8 +65,8 @@ export function AdminImportConsole({
   const [inspection, setInspection] = useState<InspectionResult | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isInspecting, startInspectTransition] = useTransition();
-  const [isImporting, startImportTransition] = useTransition();
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   const groupedRows = useMemo(() => {
     if (!inspection) {
@@ -92,25 +104,37 @@ export function AdminImportConsole({
   async function inspectSku() {
     setFeedback(null);
     setError(null);
+    setIsInspecting(true);
 
-    const response = await fetch("/api/admin/tiny/inspect", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ sku })
-    });
+    try {
+      const response = await fetch("/api/admin/tiny/inspect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ sku })
+      });
 
-    const payload = (await response.json()) as InspectionResult & { error?: string };
+      const payload = (await response.json()) as InspectionResult & { error?: string };
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setInspection(null);
+        setError(payload.error ?? "Falha ao consultar o Tiny.");
+        return;
+      }
+
+      setInspection(payload);
+      setFeedback(
+        payload.source === "foundation"
+          ? "Produto localizado na fundacao Grupo Pepper. Revise a grade e confirme o vinculo com o fornecedor."
+          : `Produto localizado no Tiny (${payload.sourceAccountLabel ?? "Pepper"}). Revise as filhas antes de importar para a fundacao.`
+      );
+    } catch (inspectError) {
       setInspection(null);
-      setError(payload.error ?? "Falha ao consultar o Tiny.");
-      return;
+      setError(inspectError instanceof Error ? inspectError.message : "Falha ao consultar o Tiny.");
+    } finally {
+      setIsInspecting(false);
     }
-
-    setInspection(payload);
-    setFeedback("Produto inspecionado com sucesso. Revise as filhas antes de importar.");
   }
 
   async function importSku() {
@@ -120,26 +144,43 @@ export function AdminImportConsole({
 
     setFeedback(null);
     setError(null);
+    setIsImporting(true);
 
-    const response = await fetch("/api/admin/tiny/import", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        sku: inspection.parent.sku,
-        supplierIds: selectedSuppliers
-      })
-    });
-
-    const payload = (await response.json()) as ImportResult & { error?: string };
-
-    if (!response.ok) {
-      setError(payload.error ?? "Falha ao importar o produto.");
+    if (selectedSuppliers.length === 0) {
+      setError("Selecione pelo menos um fornecedor antes de importar.");
+      setIsImporting(false);
       return;
     }
 
-    setFeedback(`Importação concluída. ${payload.importedVariants} variações vinculadas ao SKU ${payload.parentSku}.`);
+    try {
+      const response = await fetch("/api/admin/tiny/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sku: inspection.parent.sku,
+          supplierIds: selectedSuppliers
+        })
+      });
+
+      const payload = (await response.json()) as ImportResult & { error?: string };
+
+      if (!response.ok) {
+        setError(payload.error ?? "Falha ao importar o produto.");
+        return;
+      }
+
+      setFeedback(
+        payload.source === "foundation"
+          ? `Produto ja existia na fundacao. Vinculo confirmado para o SKU ${payload.parentSku} com ${payload.importedVariants} variacoes prontas no sistema.`
+          : `Importacao concluida via Tiny ${payload.sourceAccountLabel ?? "Pepper"}. ${payload.importedVariants} variacoes vinculadas ao SKU ${payload.parentSku} e armazenadas na fundacao.`
+      );
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Falha ao importar o produto.");
+    } finally {
+      setIsImporting(false);
+    }
   }
 
   function toggleSupplier(supplierId: string) {
@@ -152,11 +193,11 @@ export function AdminImportConsole({
     <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#d27a4f]">Importação Tiny</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#d27a4f]">Importacao Tiny</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Buscar por SKU e revisar pai + filhas</h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-            A busca prioriza SKU completo, valida o match exato, resolve a hierarquia pai/filha e já traz a grade cor x
-            tamanho pronta para revisão.
+            A busca prioriza SKU completo, valida o match exato, resolve a hierarquia pai/filha e ja traz a grade cor x
+            tamanho pronta para revisao.
           </p>
         </div>
 
@@ -169,7 +210,9 @@ export function AdminImportConsole({
           )}
         >
           {tinyConfigured ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-          {tinyConfigured ? "Tiny configurado no .env" : "TINY_API_TOKEN ainda não configurado"}
+          {tinyConfigured
+            ? "Fundacao pronta + Tiny Pepper como fallback"
+            : "Fundacao pronta. Tiny Pepper ainda nao configurado para fallback"}
         </div>
       </div>
 
@@ -192,12 +235,12 @@ export function AdminImportConsole({
 
               <button
                 type="button"
-                disabled={isInspecting || !tinyConfigured}
-                onClick={() => startInspectTransition(() => void inspectSku())}
+                disabled={isInspecting || sku.trim().length < 3}
+                onClick={() => void inspectSku()}
                 className="inline-flex h-fit items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isInspecting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}
-                Inspecionar no Tiny
+                Inspecionar na fundacao
               </button>
             </div>
 
@@ -239,16 +282,40 @@ export function AdminImportConsole({
           {inspection ? (
             <div className="rounded-[1.7rem] border border-white/70 bg-white p-5 shadow-soft">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Produto pai</p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">{inspection.parent.name}</h3>
-                  <p className="mt-1 text-sm text-slate-500">{inspection.parent.sku}</p>
+                <div className="flex items-start gap-4">
+                  <div className="relative h-20 w-20 overflow-hidden rounded-3xl border border-white bg-slate-50 shadow-inner">
+                    <Image
+                      src={inspection.parent.imageUrl ?? "/brand/pepper-logo.png"}
+                      alt={inspection.parent.name}
+                      fill
+                      className="object-contain p-2"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Produto pai</p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-900">{inspection.parent.name}</h3>
+                    <p className="mt-1 text-sm text-slate-500">{inspection.parent.sku}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span
+                        className={cn(
+                          "rounded-full px-3 py-1 text-xs font-semibold",
+                          inspection.source === "foundation"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-sky-50 text-sky-700"
+                        )}
+                      >
+                        {inspection.source === "foundation"
+                          ? "Fundacao Grupo Pepper"
+                          : `Tiny ${inspection.sourceAccountLabel ?? "Pepper"}`}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <button
                   type="button"
-                  disabled={isImporting || !tinyConfigured}
-                  onClick={() => startImportTransition(() => void importSku())}
+                  disabled={isImporting}
+                  onClick={() => void importSku()}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#eb6232] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ffb290] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isImporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -258,7 +325,7 @@ export function AdminImportConsole({
 
               <div className="mt-6 overflow-hidden rounded-[1.4rem] border border-[#f4ddd0]">
                 <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.9fr] bg-[#fff8f4] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  <div className="px-4 py-3">Variação</div>
+                  <div className="px-4 py-3">Variacao</div>
                   <div className="px-4 py-3">Cor - tamanho</div>
                   <div className="px-4 py-3 text-center">Estoque</div>
                   <div className="px-4 py-3 text-center">Status</div>
@@ -275,7 +342,7 @@ export function AdminImportConsole({
                       </span>
                     </div>
                     <div className="px-4 py-3 text-center text-sm font-semibold text-slate-900">
-                      {variant.quantity === null ? "Não importado" : variant.quantity}
+                      {variant.quantity === null ? "Nao importado" : variant.quantity}
                     </div>
                     <div className="px-4 py-3 text-center">
                       <span
@@ -288,7 +355,7 @@ export function AdminImportConsole({
                         )}
                       >
                         {variant.stockStatus === "critical"
-                          ? "Crítico"
+                          ? "Critico"
                           : variant.stockStatus === "low"
                             ? "Baixo"
                             : variant.stockStatus === "ok"
@@ -307,8 +374,8 @@ export function AdminImportConsole({
           <div className="rounded-[1.7rem] border border-white/70 bg-white p-5 shadow-soft">
             <p className="text-sm font-semibold text-slate-900">Grade cor x tamanho</p>
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Ao localizar o pai e suas filhas, organizamos a leitura por grade para facilitar revisão e preparar a
-              ordem de compra futura.
+              Ao localizar o pai e suas filhas, organizamos a leitura por grade para facilitar revisao e preparar a ordem
+              de compra futura.
             </p>
 
             <div className="mt-5 space-y-3">
@@ -320,9 +387,7 @@ export function AdminImportConsole({
                       {row.items.map((item) => (
                         <div key={item.sku} className="rounded-2xl bg-white px-3 py-2 text-sm shadow-sm">
                           <span className="font-semibold text-slate-900">{item.sizeLabel}</span>
-                          <span className="ml-2 text-slate-500">
-                            {item.quantity === null ? "sem leitura" : item.quantity}
-                          </span>
+                          <span className="ml-2 text-slate-500">{item.quantity === null ? "sem leitura" : item.quantity}</span>
                         </div>
                       ))}
                     </div>
@@ -330,18 +395,22 @@ export function AdminImportConsole({
                 ))
               ) : (
                 <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm leading-6 text-slate-500">
-                  Assim que você inspecionar um SKU, a grade aparece aqui com a hierarquia pai/filha preservada.
+                  Assim que voce inspecionar um SKU, a grade aparece aqui com a hierarquia pai/filha preservada.
                 </div>
               )}
             </div>
           </div>
 
           <div className="rounded-[1.7rem] border border-[#f2d7c7] bg-[#fff8f4] p-5 shadow-soft">
-            <p className="text-sm font-semibold text-slate-900">Boas práticas já aplicadas</p>
+            <p className="text-sm font-semibold text-slate-900">Boas praticas aplicadas</p>
             <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
-              <li>SKU é usado para localizar e o ID do Tiny fica reservado para operação de estoque.</li>
-              <li>Match exato por SKU é obrigatório antes da importação para evitar ambiguidade.</li>
-              <li>Estoque ausente não vira zero automaticamente; permanece como leitura não importada.</li>
+              <li>
+                A consulta tenta primeiro a fundacao Grupo Pepper e so aciona o Tiny da Pepper quando o SKU ainda nao
+                existe na base principal.
+              </li>
+              <li>SKU e usado para localizar e o ID do Tiny fica reservado para operacao de estoque.</li>
+              <li>Match exato por SKU e obrigatorio antes da importacao para evitar ambiguidade.</li>
+              <li>Estoque ausente nao vira zero automaticamente; permanece como leitura nao importada.</li>
               <li>Pai e filhas entram juntos no sistema para manter a grade consistente desde o cadastro.</li>
             </ul>
           </div>

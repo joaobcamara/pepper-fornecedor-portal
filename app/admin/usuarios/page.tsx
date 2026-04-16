@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { AdminUsersManager } from "@/components/admin-users-manager";
 import { AdminShellV2 as AdminShell } from "@/components/admin-shell-v2";
+import { getLocalSupplierDirectory, getLocalUsers } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";
 
 export default async function AdminUsersPage() {
@@ -11,31 +13,55 @@ export default async function AdminUsersPage() {
     redirect("/login?next=/admin/usuarios");
   }
 
-  const [users, suppliers] = await Promise.all([
-    prisma.user
-      .findMany({
-        include: {
-          supplier: true
-        },
-        orderBy: {
-          createdAt: "desc"
-        }
-      })
-      .catch(() => []),
-    prisma.supplier
-      .findMany({
-        where: {
-          active: true
-        },
-        orderBy: {
-          name: "asc"
-        }
-      })
-      .catch(() => [])
-  ]);
-  const inactiveUsersCount = users.filter((user) => !user.active).length;
-  const supplierUsersWithoutScopeCount = users.filter((user) => user.role === "SUPPLIER" && !user.supplierId).length;
-  const adminUsersCount = users.filter((user) => user.role === "ADMIN").length;
+  const [users, suppliers] = isLocalOperationalMode()
+    ? await Promise.all([getLocalUsers(), getLocalSupplierDirectory()])
+    : await Promise.all([
+        prisma.user
+          .findMany({
+            include: {
+              supplier: true
+            },
+            orderBy: {
+              createdAt: "desc"
+            }
+          })
+          .catch(() => []),
+        prisma.supplier
+          .findMany({
+            where: {
+              active: true
+            },
+            orderBy: {
+              name: "asc"
+            }
+          })
+          .catch(() => [])
+      ]);
+  const mappedUsers = users.map((user) => ({
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    active: user.active,
+    supplierId: user.supplierId,
+    supplierName: "supplier" in user ? user.supplier?.name ?? null : ("supplierName" in user ? user.supplierName : null),
+    lastLoginAt:
+      "lastLoginAt" in user && typeof user.lastLoginAt === "string"
+        ? user.lastLoginAt
+        : user.lastLoginAt
+          ? user.lastLoginAt.toLocaleString("pt-BR")
+          : null,
+    createdAt:
+      "createdAt" in user && typeof user.createdAt === "string"
+        ? user.createdAt
+        : new Date(user.createdAt).toLocaleDateString("pt-BR")
+  }));
+  const mappedSuppliers = suppliers.map((supplier) => ({
+    id: supplier.id,
+    name: supplier.name
+  }));
+  const inactiveUsersCount = mappedUsers.filter((user) => !user.active).length;
+  const supplierUsersWithoutScopeCount = mappedUsers.filter((user) => user.role === "SUPPLIER" && !user.supplierId).length;
+  const adminUsersCount = mappedUsers.filter((user) => user.role === "ADMIN").length;
   const pepperIaAlertCount = inactiveUsersCount + supplierUsersWithoutScopeCount;
 
   return (
@@ -51,22 +77,7 @@ export default async function AdminUsersPage() {
           : "Cadastre acessos do time Pepper e dos fornecedores com os vinculos corretos antes de subir o sistema."
       }
     >
-      <AdminUsersManager
-        users={users.map((user) => ({
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          active: user.active,
-          supplierId: user.supplierId,
-          supplierName: user.supplier?.name ?? null,
-          lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toLocaleString("pt-BR") : null,
-          createdAt: user.createdAt.toLocaleDateString("pt-BR")
-        }))}
-        suppliers={suppliers.map((supplier) => ({
-          id: supplier.id,
-          name: supplier.name
-        }))}
-      />
+      <AdminUsersManager users={mappedUsers} suppliers={mappedSuppliers} />
     </AdminShell>
   );
 }

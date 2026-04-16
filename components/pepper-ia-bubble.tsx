@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition, type ComponentType } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Building2,
@@ -190,7 +190,7 @@ export function PepperIaBubble({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSending, startSending] = useTransition();
+  const [isSending, setIsSending] = useState(false);
   const [showTeaser, setShowTeaser] = useState(false);
   const [transientAnimation, setTransientAnimation] = useState<"bounce" | "shake" | "expand" | null>(null);
 
@@ -238,49 +238,50 @@ export function PepperIaBubble({
 
   async function sendMessage(formData: FormData) {
     setError(null);
+    setIsSending(true);
 
-    const response = await fetch("/api/pepperia/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message: String(formData.get("message") ?? ""),
-        pageKey: resolvedPageKey,
-        pageHint: pageHint ?? null
-      })
-    });
+    try {
+      const response = await fetch("/api/pepperia/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: String(formData.get("message") ?? ""),
+          pageKey: resolvedPageKey,
+          pageHint: pageHint ?? null
+        })
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel falar com a Pepper IA agora.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel falar com a Pepper IA agora.");
+        return;
+      }
+
+      formRef.current?.reset();
+      router.refresh();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel falar com a Pepper IA agora.");
+    } finally {
+      setIsSending(false);
     }
+  }
 
-    formRef.current?.reset();
-    router.refresh();
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void sendMessage(new FormData(event.currentTarget));
   }
 
   return (
     <>
-      <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end gap-3 md:bottom-5 md:right-5">
-        {showTeaser ? (
-          <div
-            className={cn(
-              "max-w-[18rem] rounded-[1.4rem] border px-4 py-3 text-sm leading-5 backdrop-blur-xl transition duration-300",
-              role === "ADMIN" ? "border-white/70 bg-white/70 text-slate-700 shadow-[0_18px_38px_rgba(80,93,125,0.12)]" : theme.teaserClassName
-            )}
-          >
-            {teaserText}
-          </div>
-        ) : null}
-
+      <div className="fixed bottom-4 right-3 z-50 hidden flex-col items-end gap-3 md:flex md:bottom-5 md:right-5">
         <button
           type="button"
           onClick={() => setIsOpen((current) => !current)}
           className={cn(
-            "relative inline-flex items-center gap-3 rounded-full border px-4 py-3 text-sm font-semibold transition duration-300 hover:scale-[1.02]",
+            "relative inline-flex items-center gap-2 rounded-full border px-3 py-2.5 text-xs font-semibold transition duration-300 hover:scale-[1.02] sm:gap-3 sm:px-4 sm:py-3 sm:text-sm",
             role === "ADMIN"
               ? "border-[#d7dff2] bg-[linear-gradient(135deg,#f7faff_0%,#edf3ff_58%,#dde9ff_100%)] text-[#2f4678] shadow-[0_18px_42px_rgba(91,113,162,0.18)]"
               : theme.buttonClassName,
@@ -289,15 +290,15 @@ export function PepperIaBubble({
         >
           <span
             className={cn(
-              "flex h-10 w-10 items-center justify-center rounded-full backdrop-blur-md",
+              "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md sm:h-10 sm:w-10",
               theme.iconWrapClassName,
               role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-wrap"
             )}
           >
             {isOpen ? (
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4 sm:h-5 sm:w-5" />
             ) : (
-              <Icon className={cn("h-5 w-5", role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-icon")} />
+              <Icon className={cn("h-4 w-4 sm:h-5 sm:w-5", role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-icon")} />
             )}
           </span>
           <span className="font-semibold">Pepper IA</span>
@@ -380,11 +381,7 @@ export function PepperIaBubble({
               )}
             </div>
 
-            <form
-              ref={formRef}
-              action={(formData) => startSending(() => void sendMessage(formData))}
-              className="border-t border-slate-200 bg-white px-4 py-4"
-            >
+            <form ref={formRef} onSubmit={handleSubmit} className="border-t border-slate-200 bg-white px-4 py-4">
               <textarea
                 ref={textareaRef}
                 name="message"

@@ -5,7 +5,13 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { saveUploadedFile } from "@/lib/local-files";
+import {
+  createLocalFinancialEntry,
+  getLocalAdminFinancialBoardData,
+  getLocalSupplierFinancialBoardData
+} from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";
 
 export async function POST(request: Request) {
@@ -29,6 +35,51 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Pedido invalido para envio ao financeiro." }, { status: 400 });
     }
 
+    const [uploadedRomaneio, uploadedNotaFiscal] = await Promise.all([
+      romaneio instanceof File && romaneio.size > 0
+        ? saveUploadedFile({
+            file: romaneio,
+            folder: "uploads/financial",
+            prefix: "romaneio"
+          })
+        : Promise.resolve(null),
+      notaFiscal instanceof File && notaFiscal.size > 0
+        ? saveUploadedFile({
+            file: notaFiscal,
+            folder: "uploads/financial",
+            prefix: "nota-fiscal"
+          })
+        : Promise.resolve(null)
+    ]);
+
+    if (isLocalOperationalMode()) {
+      const created = await createLocalFinancialEntry({
+        supplierId: session.supplierId,
+        orderId,
+        note,
+        supplierNote,
+        dueDate,
+        amount: amountInput,
+        uploadedRomaneio,
+        uploadedNotaFiscal
+      });
+
+      const [adminBoard, supplierBoard] = await Promise.all([
+        getLocalAdminFinancialBoardData(),
+        getLocalSupplierFinancialBoardData(session.supplierId)
+      ]);
+
+      return NextResponse.json({
+        ok: true,
+        financialEntryId: created.id,
+        verification: {
+          storedInFoundation: adminBoard.some((item) => item.id === created.id),
+          visibleForAdminFinancial: adminBoard.some((item) => item.id === created.id),
+          supplierWorkflowMoved: supplierBoard.entries.some((item) => item.id === created.id)
+        }
+      });
+    }
+
     const order = await prisma.supplierOrder.findFirst({
       where: {
         id: orderId,
@@ -48,23 +99,6 @@ export async function POST(request: Request) {
     }
 
     const amount = Number.isFinite(amountInput) && amountInput > 0 ? amountInput : order.confirmedTotalCost;
-
-    const [uploadedRomaneio, uploadedNotaFiscal] = await Promise.all([
-      romaneio instanceof File && romaneio.size > 0
-        ? saveUploadedFile({
-            file: romaneio,
-            folder: "uploads/financial",
-            prefix: "romaneio"
-          })
-        : Promise.resolve(null),
-      notaFiscal instanceof File && notaFiscal.size > 0
-        ? saveUploadedFile({
-            file: notaFiscal,
-            folder: "uploads/financial",
-            prefix: "nota-fiscal"
-          })
-        : Promise.resolve(null)
-    ]);
 
     const created = await prisma.supplierFinancialEntry.create({
       data: {
@@ -134,7 +168,33 @@ export async function POST(request: Request) {
       }
     });
 
-    return NextResponse.json({ ok: true, financialEntryId: created.id });
+    const [storedEntry, visibleForAdminFinancial, supplierWorkflowMoved] = await Promise.all([
+      prisma.supplierFinancialEntry.findUnique({
+        where: { id: created.id },
+        select: { id: true }
+      }),
+      prisma.supplierFinancialEntry.findFirst({
+        where: { id: created.id },
+        select: { id: true }
+      }),
+      prisma.supplierOrder.findFirst({
+        where: {
+          id: order.id,
+          workflowStage: SupplierOrderWorkflowStage.IN_FINANCIAL_REVIEW
+        },
+        select: { id: true }
+      })
+    ]);
+
+    return NextResponse.json({
+      ok: true,
+      financialEntryId: created.id,
+      verification: {
+        storedInFoundation: Boolean(storedEntry),
+        visibleForAdminFinancial: Boolean(visibleForAdminFinancial),
+        supplierWorkflowMoved: Boolean(supplierWorkflowMoved)
+      }
+    });
   } catch {
     return NextResponse.json({ error: "Nao foi possivel enviar para o financeiro agora." }, { status: 503 });
   }

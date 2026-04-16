@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { syncCatalogProductByParentSku } from "@/lib/catalog-sync";
-import { getCurrentSession } from "@/lib/session";
+
 import { prisma } from "@/lib/prisma";
+import { getCurrentSession } from "@/lib/session";
 
 const bodySchema = z.object({
   parentSku: z.string().min(1),
@@ -22,75 +22,119 @@ const bodySchema = z.object({
     .default([])
 });
 
+async function resolveValidSupplierIds(supplierIds: string[]) {
+  if (supplierIds.length === 0) {
+    return [];
+  }
+
+  const suppliers = await prisma.supplier.findMany({
+    where: {
+      id: {
+        in: supplierIds
+      },
+      active: true
+    },
+    select: {
+      id: true
+    }
+  });
+
+  return suppliers.map((supplier) => supplier.id);
+}
+
 export async function POST(request: Request) {
   const session = await getCurrentSession();
 
   if (!session || session.role !== "ADMIN") {
-    return NextResponse.json({ error: "Acesso não autorizado." }, { status: 401 });
+    return NextResponse.json({ error: "Acesso nao autorizado." }, { status: 401 });
   }
 
   const body = bodySchema.safeParse(await request.json());
 
   if (!body.success) {
-    return NextResponse.json({ error: "Dados inválidos para atualizar o produto." }, { status: 400 });
+    return NextResponse.json({ error: "Dados invalidos para atualizar o produto." }, { status: 400 });
   }
 
-  const parent = await prisma.product.findUnique({
-    where: {
-      sku: body.data.parentSku
-    },
-    include: {
-      variants: {
-        include: {
-          assignments: true
+  const validSupplierIds = await resolveValidSupplierIds(body.data.supplierIds);
+
+  if (body.data.supplierIds.length > 0 && validSupplierIds.length === 0) {
+    return NextResponse.json({ error: "Nenhum fornecedor ativo valido foi encontrado para este produto." }, { status: 400 });
+  }
+
+  const [parent, catalogProduct] = await Promise.all([
+    prisma.product.findUnique({
+      where: {
+        sku: body.data.parentSku
+      },
+      include: {
+        variants: {
+          select: {
+            id: true,
+            archivedAt: true
+          }
         }
       }
-    }
-  });
+    }),
+    prisma.catalogProduct.findUnique({
+      where: {
+        skuParent: body.data.parentSku
+      },
+      include: {
+        supplierLinks: true,
+        variants: {
+          select: {
+            id: true,
+            sourceProductId: true
+          }
+        }
+      }
+    })
+  ]);
 
-  if (!parent) {
-    return NextResponse.json({ error: "Produto pai não encontrado." }, { status: 404 });
+  if (!parent && !catalogProduct) {
+    return NextResponse.json({ error: "Produto pai nao encontrado." }, { status: 404 });
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.product.update({
-      where: {
-        id: parent.id
-      },
-      data: {
-        internalName: body.data.internalName,
-        active: body.data.active
-      }
-    });
-
-    for (const variant of parent.variants) {
-      await tx.product.update({
+    if (catalogProduct) {
+      await tx.catalogProduct.update({
         where: {
-          id: variant.id
+          id: catalogProduct.id
+        },
+        data: {
+          name: body.data.internalName,
+          active: body.data.active,
+          archivedAt: body.data.active ? null : catalogProduct.archivedAt ?? new Date()
+        }
+      });
+
+      await tx.catalogVariant.updateMany({
+        where: {
+          catalogProductId: catalogProduct.id
         },
         data: {
           active: body.data.active
         }
       });
 
-      const existingAssignments = new Map(variant.assignments.map((assignment) => [assignment.supplierId, assignment]));
+      const existingLinks = new Map(catalogProduct.supplierLinks.map((link) => [link.supplierId, link.id] as const));
 
-      for (const supplierId of body.data.supplierIds) {
-        const existing = existingAssignments.get(supplierId);
+      for (const supplierId of validSupplierIds) {
+        const existingLinkId = existingLinks.get(supplierId);
 
-        if (existing) {
-          await tx.productSupplier.update({
+        if (existingLinkId) {
+          await tx.catalogProductSupplier.update({
             where: {
-              id: existing.id
+              id: existingLinkId
             },
             data: {
               active: true
             }
           });
         } else {
-          await tx.productSupplier.create({
+          await tx.catalogProductSupplier.create({
             data: {
-              productId: variant.id,
+              catalogProductId: catalogProduct.id,
               supplierId,
               active: true
             }
@@ -98,11 +142,11 @@ export async function POST(request: Request) {
         }
       }
 
-      for (const assignment of variant.assignments) {
-        if (!body.data.supplierIds.includes(assignment.supplierId)) {
-          await tx.productSupplier.update({
+      for (const link of catalogProduct.supplierLinks) {
+        if (!validSupplierIds.includes(link.supplierId)) {
+          await tx.catalogProductSupplier.update({
             where: {
-              id: assignment.id
+              id: link.id
             },
             data: {
               active: false
@@ -112,24 +156,67 @@ export async function POST(request: Request) {
       }
     }
 
+    if (parent) {
+      await tx.product.update({
+        where: {
+          id: parent.id
+        },
+        data: {
+          internalName: body.data.internalName,
+          active: body.data.active,
+          archivedAt: body.data.active ? null : parent.archivedAt ?? new Date()
+        }
+      });
+    }
+
+    for (const variant of catalogProduct?.variants ?? []) {
+      if (!variant.sourceProductId) {
+        continue;
+      }
+
+      await tx.product.update({
+        where: {
+          id: variant.sourceProductId
+        },
+        data: {
+          active: body.data.active,
+          archivedAt: body.data.active ? null : new Date()
+        }
+      });
+    }
+
+    for (const variant of parent?.variants ?? []) {
+      await tx.product.update({
+        where: {
+          id: variant.id
+        },
+        data: {
+          active: body.data.active,
+          archivedAt: body.data.active ? null : variant.archivedAt ?? new Date()
+        }
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         actorUserId: session.userId,
         action: "product.settings.update",
-        entityType: "product",
-        entityId: parent.id,
+        entityType: "catalog_product",
+        entityId: catalogProduct?.id ?? parent?.id ?? body.data.parentSku,
         metadata: JSON.stringify({
           parentSku: body.data.parentSku,
           active: body.data.active,
-          supplierIds: body.data.supplierIds
+          supplierIds: validSupplierIds
         })
       }
     });
-
-    await syncCatalogProductByParentSku(tx, body.data.parentSku);
   });
 
   return NextResponse.json({
-    ok: true
+    ok: true,
+    verification: {
+      storedInFoundation: true,
+      visibleForSupplier: body.data.active && validSupplierIds.length > 0
+    }
   });
 }

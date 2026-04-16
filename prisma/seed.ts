@@ -1,6 +1,8 @@
 import { PrismaClient, ProductKind, UserRole } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { rebuildCatalogLayer } from "./catalog-sync";
+import { PEPPER_COLOR_REFERENCES, PEPPER_SIZE_REFERENCES } from "../lib/pepper-reference-data";
+import { PEPPER_TINY_ACCOUNT_REFERENCES } from "../lib/pepper-tiny-account-data";
 
 const prisma = new PrismaClient();
 
@@ -55,8 +57,23 @@ async function main() {
   await prisma.inventorySnapshot.deleteMany();
   await prisma.productSupplier.deleteMany();
   await prisma.product.deleteMany();
+  await prisma.pepperTinyAccountReference.deleteMany();
+  await prisma.pepperColorReference.deleteMany();
+  await prisma.pepperSizeReference.deleteMany();
   await prisma.user.deleteMany();
   await prisma.supplier.deleteMany();
+
+  await prisma.pepperSizeReference.createMany({
+    data: PEPPER_SIZE_REFERENCES
+  });
+
+  await prisma.pepperColorReference.createMany({
+    data: PEPPER_COLOR_REFERENCES
+  });
+
+  await prisma.pepperTinyAccountReference.createMany({
+    data: PEPPER_TINY_ACCOUNT_REFERENCES
+  });
 
   const supplier = await prisma.supplier.create({
     data: {

@@ -47,6 +47,34 @@ Configurar manualmente no painel do serviço:
 - `OPENAI_API_KEY` se a validacao assistida ficar ativa
 - `OPENAI_SUGGESTION_MODEL=gpt-5-mini`
 
+## Variaveis opcionais para integracoes futuras da fundacao
+
+Nao sao obrigatorias para o deploy do portal atual, mas ja devem seguir este padrao quando forem ativadas:
+
+- `PRINTNODE_API_KEY`
+- `SENDPULSE_CLIENT_ID`
+- `SENDPULSE_API_KEY`
+- `MERCADO_LIVRE_CLIENT_ID`
+- `MERCADO_LIVRE_CLIENT_SECRET`
+- `MERCADO_LIVRE_REDIRECT_URI`
+- `SHOPEE_PARTNER_ID`
+- `SHOPEE_PARTNER_KEY`
+- `SHOPEE_SHOP_ID`
+- `TIKTOK_SHOP_APP_KEY`
+- `TIKTOK_SHOP_APP_SECRET`
+- `TIKTOK_SHOP_ID`
+- `MAGALU_SELLER_CLIENT_ID`
+- `MAGALU_SELLER_CLIENT_SECRET`
+- `MAGALU_SELLER_STORE_ID`
+- `MELHOR_ENVIO_CLIENT_ID`
+- `MELHOR_ENVIO_CLIENT_SECRET`
+- `MELHOR_ENVIO_REDIRECT_URI`
+- `MELHOR_ENVIO_ACCESS_TOKEN`
+- `MELHOR_ENVIO_REFRESH_TOKEN`
+- `MERCADO_PAGO_ACCESS_TOKEN`
+- `MERCADO_PAGO_PUBLIC_KEY`
+- `MERCADO_PAGO_WEBHOOK_SECRET`
+
 ## Bucket no Supabase
 
 Antes do deploy final:

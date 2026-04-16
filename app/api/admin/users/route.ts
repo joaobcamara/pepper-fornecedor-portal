@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { hashPassword } from "@/lib/auth";
+import { createLocalUser, updateLocalUser } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
 import { getRouteSession } from "@/lib/route-session";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
 const createSchema = z.object({
   username: z.string().min(3, "Informe um usuario com pelo menos 3 caracteres."),
@@ -39,6 +41,18 @@ export async function POST(request: Request) {
   }
 
   try {
+    if (isLocalOperationalMode()) {
+      const user = await createLocalUser({
+        username: body.data.username,
+        password: body.data.password,
+        role: body.data.role,
+        supplierId: body.data.role === "SUPPLIER" ? body.data.supplierId ?? null : null,
+        active: body.data.active
+      });
+
+      return NextResponse.json({ ok: true, userId: user.id, verification: { storedInFoundation: true } });
+    }
+
     const user = await prisma.user.create({
       data: {
         username: body.data.username.trim().toLowerCase(),
@@ -84,6 +98,18 @@ export async function PATCH(request: Request) {
   }
 
   try {
+    if (isLocalOperationalMode()) {
+      await updateLocalUser({
+        id: body.data.id,
+        username: body.data.username,
+        role: body.data.role,
+        supplierId: body.data.role === "SUPPLIER" ? body.data.supplierId ?? null : null,
+        active: body.data.active
+      });
+
+      return NextResponse.json({ ok: true, verification: { storedInFoundation: true } });
+    }
+
     const user = await prisma.user.update({
       where: { id: body.data.id },
       data: {

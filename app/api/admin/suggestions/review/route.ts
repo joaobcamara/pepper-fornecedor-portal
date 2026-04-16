@@ -50,6 +50,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sugestao nao encontrada." }, { status: 404 });
   }
 
+  if (
+    suggestion.status === ProductSuggestionStatus.APPROVED_FOR_CATALOG ||
+    suggestion.status === ProductSuggestionStatus.IMPORTED_BY_CATALOG
+  ) {
+    return NextResponse.json(
+      { error: "Sugestoes aprovadas ou importadas nao podem mais ser alteradas." },
+      { status: 409 }
+    );
+  }
+
   const nextStatus =
     body.status && Object.values(ProductSuggestionStatus).includes(body.status as ProductSuggestionStatus)
       ? (body.status as ProductSuggestionStatus)
@@ -151,8 +161,38 @@ export async function POST(request: Request) {
     });
   }
 
+  const persistedSuggestion = await prisma.productSuggestion.findUnique({
+    where: {
+      id: suggestion.id
+    },
+    include: {
+      onboardingItem: true,
+      statusHistory: {
+        orderBy: {
+          createdAt: "desc"
+        },
+        take: 1
+      }
+    }
+  });
+  const latestHistory = persistedSuggestion?.statusHistory[0] ?? null;
+
   return NextResponse.json({
     ok: true,
-    status: updated.status
+    status: updated.status,
+    verification: {
+      storedInFoundation: Boolean(persistedSuggestion && persistedSuggestion.status === nextStatus),
+      visibleForSupplier:
+        nextStatus === ProductSuggestionStatus.NEEDS_REVISION ||
+        nextStatus === ProductSuggestionStatus.APPROVED_FOR_CATALOG
+          ? Boolean(latestHistory?.visibleToSupplier)
+          : true,
+      onboardingReady:
+        nextStatus === ProductSuggestionStatus.APPROVED_FOR_CATALOG
+          ? persistedSuggestion?.onboardingItem?.status === "READY"
+          : nextStatus === ProductSuggestionStatus.IMPORTED_BY_CATALOG
+            ? persistedSuggestion?.onboardingItem?.status === "IMPORTED"
+            : true
+    }
   });
 }

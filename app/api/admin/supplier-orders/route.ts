@@ -1,6 +1,12 @@
 import { SupplierOrderStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
+import {
+  createLocalAdminSupplierOrder,
+  getLocalAdminSupplierOrderPageData,
+  updateLocalAdminSupplierOrder
+} from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";
 
 function createOrderNumber() {
@@ -43,20 +49,70 @@ export async function POST(request: Request) {
     const supplierId = body.supplierId?.trim();
     const productName = body.productName?.trim();
     const productSku = body.productSku?.trim();
-    const productId = body.productId?.trim() || null;
+    const requestedProductId = body.productId?.trim() || null;
     const items = (body.items ?? []).filter((item) => Number(item.requestedQuantity) > 0);
 
     if (!supplierId || !productName || !productSku || items.length === 0) {
       return NextResponse.json({ error: "Preencha fornecedor, produto e pelo menos um item do pedido." }, { status: 400 });
     }
 
-    const supplier = await prisma.supplier.findUnique({
-      where: { id: supplierId }
-    });
+    if (isLocalOperationalMode()) {
+      const order = await createLocalAdminSupplierOrder({
+        supplierId,
+        productId: requestedProductId,
+        productName,
+        productSku,
+        imageUrl: body.imageUrl ?? null,
+        adminNote: body.adminNote?.trim() || null,
+        items,
+        actorUsername: session.username
+      });
+
+      const localBoard = await getLocalAdminSupplierOrderPageData();
+      const storedInFoundation = localBoard.orders.some((item) => item.id === order.id);
+      const visibleForSupplier = localBoard.orders.some((item) => item.id === order.id && item.supplierId === supplierId);
+
+      return NextResponse.json({
+        ok: true,
+        orderId: order.id,
+        verification: {
+          storedInFoundation,
+          visibleForSupplier
+        }
+      });
+    }
+
+    const [supplier, resolvedProduct, resolvedCatalogProduct] = await Promise.all([
+      prisma.supplier.findUnique({
+        where: { id: supplierId }
+      }),
+      requestedProductId
+        ? prisma.product.findUnique({
+            where: {
+              id: requestedProductId
+            },
+            select: {
+              id: true
+            }
+          })
+        : Promise.resolve(null),
+      requestedProductId
+        ? prisma.catalogProduct.findUnique({
+            where: {
+              id: requestedProductId
+            },
+            select: {
+              sourceProductId: true
+            }
+          })
+        : Promise.resolve(null)
+    ]);
 
     if (!supplier) {
       return NextResponse.json({ error: "Fornecedor nao encontrado." }, { status: 404 });
     }
+
+    const productId = resolvedProduct?.id ?? resolvedCatalogProduct?.sourceProductId ?? null;
 
     const estimatedTotalCost = items.reduce((sum, item) => sum + Number(item.requestedQuantity) * Number(item.unitCost ?? 0), 0);
 
@@ -103,8 +159,30 @@ export async function POST(request: Request) {
       }
     });
 
-    return NextResponse.json({ ok: true, orderId: order.id });
-  } catch {
+    const [storedInFoundation, visibleForSupplier] = await Promise.all([
+      prisma.supplierOrder.findUnique({
+        where: { id: order.id },
+        select: { id: true }
+      }),
+      prisma.supplierOrder.findFirst({
+        where: {
+          id: order.id,
+          supplierId
+        },
+        select: { id: true }
+      })
+    ]);
+
+    return NextResponse.json({
+      ok: true,
+      orderId: order.id,
+      verification: {
+        storedInFoundation: Boolean(storedInFoundation),
+        visibleForSupplier: Boolean(visibleForSupplier)
+      }
+    });
+  } catch (error) {
+    console.error("[supplier-orders][POST]", error);
     return NextResponse.json({ error: "Nao foi possivel criar o pedido ao fornecedor agora." }, { status: 503 });
   }
 }
@@ -122,6 +200,17 @@ export async function PATCH(request: Request) {
 
     if (!orderId || !body.status) {
       return NextResponse.json({ error: "Pedido ou status invalido." }, { status: 400 });
+    }
+
+    if (isLocalOperationalMode()) {
+      await updateLocalAdminSupplierOrder({
+        orderId,
+        status: body.status,
+        adminNote: body.adminNote?.trim() || null,
+        actorUsername: session.username
+      });
+
+      return NextResponse.json({ ok: true });
     }
 
     const existing = await prisma.supplierOrder.findUnique({
@@ -169,7 +258,8 @@ export async function PATCH(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (error) {
+    console.error("[supplier-orders][PATCH]", error);
     return NextResponse.json({ error: "Nao foi possivel atualizar o pedido agora." }, { status: 503 });
   }
 }

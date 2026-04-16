@@ -1,6 +1,13 @@
 import { SupplierOrderStatus, SupplierOrderItemStatus } from "@prisma/client";
+import { getDemoAdminSupplierOrdersData } from "@/lib/demo-data";
+import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
+import {
+  getLocalAdminSupplierOrderPageData,
+  getLocalSupplierReceivedOrders
+} from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
-import { getColorLabel, getSizeLabel } from "@/lib/sku";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
+import { buildSalesPeriodTotals } from "@/lib/sales-metrics";
 import {
   getOperationalOriginLabel,
   getSupplierFinancialStatusLabel,
@@ -46,35 +53,15 @@ export function getSupplierOrderItemStatusLabel(status: SupplierOrderItemStatus)
 }
 
 export async function getAdminSupplierOrderPageData() {
+  if (isLocalOperationalMode()) {
+    return getLocalAdminSupplierOrderPageData();
+  }
+
   try {
-    const [suppliers, products, orders] = await Promise.all([
+    const [suppliers, orders, catalogProducts] = await Promise.all([
       prisma.supplier.findMany({
         where: { active: true },
         orderBy: { name: "asc" }
-      }),
-      prisma.product.findMany({
-        where: {
-          kind: "VARIANT",
-          active: true,
-          archivedAt: null,
-          assignments: {
-            some: {
-              active: true
-            }
-          }
-        },
-        include: {
-          parent: true,
-          assignments: {
-            where: { active: true },
-            include: {
-              supplier: true
-            }
-          }
-        },
-        orderBy: {
-          sku: "asc"
-        }
       }),
       prisma.supplierOrder.findMany({
         include: {
@@ -100,72 +87,30 @@ export async function getAdminSupplierOrderPageData() {
         orderBy: {
           createdAt: "desc"
         }
+      }),
+      listFoundationCatalogProducts({
+        onlyActive: true
       })
     ]);
 
-    const costMap = new Map(
-      (
-        await prisma.catalogVariant.findMany({
-          where: {
-            sourceProductId: {
-              in: products.map((product) => product.id)
-            }
-          },
-          select: {
-            sourceProductId: true,
-            price: {
-              select: {
-                costPrice: true
-              }
+    const variantMetrics = catalogProducts.length
+      ? await prisma.variantSalesMetricDaily.findMany({
+        where: {
+          variantId: {
+              in: catalogProducts.flatMap((product) => product.variants.map((variant) => variant.id))
+            },
+            date: {
+              gte: new Date(new Date().setDate(new Date().getDate() - 364))
             }
           }
         })
-      )
-        .filter((item) => item.sourceProductId)
-        .map((item) => [item.sourceProductId as string, item.price?.costPrice ?? 0] as const)
-    );
+      : [];
 
-    const groupedProducts = new Map<
-      string,
-      {
-        id: string;
-        supplierId: string;
-        supplierName: string;
-        productName: string;
-        productSku: string;
-        imageUrl: string | null;
-        variants: Array<{
-          id: string;
-          sku: string;
-          color: string;
-          size: string;
-          unitCost: number;
-        }>;
-      }
-    >();
-
-    for (const product of products) {
-      for (const assignment of product.assignments) {
-        const key = `${assignment.supplierId}:${product.parent?.id ?? product.id}`;
-        const current = groupedProducts.get(key) ?? {
-          id: product.parent?.id ?? product.id,
-          supplierId: assignment.supplierId,
-          supplierName: assignment.supplier.name,
-          productName: product.parent?.internalName ?? product.internalName,
-          productSku: product.parent?.sku ?? product.sku,
-          imageUrl: product.parent?.imageUrl ?? product.imageUrl ?? null,
-          variants: []
-        };
-
-        current.variants.push({
-          id: product.id,
-          sku: product.sku,
-          color: getColorLabel(product.colorCode),
-          size: getSizeLabel(product.sizeCode),
-          unitCost: costMap.get(product.id) ?? 0
-        });
-        groupedProducts.set(key, current);
-      }
+    const variantMetricMap = new Map<string, typeof variantMetrics>();
+    for (const metric of variantMetrics) {
+      const list = variantMetricMap.get(metric.variantId) ?? [];
+      list.push(metric);
+      variantMetricMap.set(metric.variantId, list);
     }
 
     return {
@@ -174,7 +119,27 @@ export async function getAdminSupplierOrderPageData() {
         name: supplier.name,
         slug: supplier.slug
       })),
-      products: Array.from(groupedProducts.values()).sort((a, b) => a.productName.localeCompare(b.productName)),
+      products: catalogProducts
+        .flatMap((product) =>
+          product.supplierLinks.map((supplierLink) => ({
+            id: product.id,
+            supplierId: supplierLink.id,
+            supplierName: supplierLink.name,
+            productName: product.internalName,
+            productSku: product.parentSku,
+            imageUrl: product.imageUrl,
+            variants: product.variants.map((variant) => ({
+              id: variant.id,
+              sku: variant.sku,
+              color: variant.colorLabel,
+              size: variant.sizeLabel,
+              unitCost: variant.costPrice ?? 0,
+              currentStock: variant.quantity,
+              sales: buildSalesPeriodTotals(variantMetricMap.get(variant.id) ?? [])
+            }))
+          }))
+        )
+        .sort((a, b) => a.productName.localeCompare(b.productName)),
       orders: orders.map((order) => ({
         id: order.id,
         orderNumber: order.orderNumber,
@@ -257,15 +222,15 @@ export async function getAdminSupplierOrderPageData() {
       }))
     };
   } catch {
-    return {
-      suppliers: [],
-      products: [],
-      orders: []
-    };
+    return getDemoAdminSupplierOrdersData();
   }
 }
 
 export async function getSupplierReceivedOrders(supplierId: string) {
+  if (isLocalOperationalMode()) {
+    return getLocalSupplierReceivedOrders(supplierId);
+  }
+
   try {
     const orders = await prisma.supplierOrder.findMany({
       where: {

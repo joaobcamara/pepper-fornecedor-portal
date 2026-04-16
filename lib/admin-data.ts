@@ -1,4 +1,6 @@
 import { getDemoAdminPageData } from "@/lib/demo-data";
+import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
+import { getLocalAdminDashboardData } from "@/lib/local-dashboard-data";
 import {
   getOperationalOriginLabel,
   getReplenishmentNextStep,
@@ -7,8 +9,15 @@ import {
   getSupplierOrderWorkflowLabel
 } from "@/lib/operations-workflow";
 import { prisma } from "@/lib/prisma";
-import { getDateWindows, safeCoverageDays, sumNumbers } from "@/lib/sales-metrics";
-import { getColorLabel, getSizeLabel } from "@/lib/sku";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
+import {
+  buildSalesPeriodTotals,
+  getDateWindows,
+  getMovementBadge,
+  safeCoverageDays,
+  sumNumbers,
+  type SalesPeriodTotals
+} from "@/lib/sales-metrics";
 import { getStockBand, getStockBandLabel, resolveStockThresholds, type StockBand } from "@/lib/stock";
 
 export type AdminDashboardData = {
@@ -42,7 +51,15 @@ export type AdminDashboardData = {
     lowStockThreshold: number | null;
     variantCount: number;
     totalStock: number;
+    totalEstimatedCost: number;
     staleCount: number;
+    band: StockBand;
+    bandLabel: string;
+    sales: SalesPeriodTotals;
+    coverageDays: number | null;
+    movementBadge: string;
+    topColorLabel: string | null;
+    topSizeLabel: string | null;
     supplierIds: string[];
     suppliers: Array<{ id: string; name: string }>;
     updatedAt: string;
@@ -75,6 +92,8 @@ export type AdminDashboardData = {
       colorLabel: string;
       quantity: number | null;
       band: StockBand;
+      sales: SalesPeriodTotals;
+      unitCost: number | null;
       criticalStockThreshold: number | null;
       lowStockThreshold: number | null;
       effectiveCriticalStockThreshold: number;
@@ -146,18 +165,23 @@ export type AdminDashboardData = {
 };
 
 export async function getAdminPageData(): Promise<AdminDashboardData> {
+  if (isLocalOperationalMode()) {
+    return getLocalAdminDashboardData();
+  }
+
   let suppliers;
   let recentBatches;
   let syncRuns;
-  let parentProducts;
+  let catalogProducts;
   let supplierMetrics;
   let productMetrics;
   let replenishmentRequests;
   let supplierOrders;
+  let variantMetrics;
   const windows = getDateWindows();
 
   try {
-    [suppliers, recentBatches, syncRuns, parentProducts, supplierMetrics, productMetrics, replenishmentRequests, supplierOrders] = await Promise.all([
+    [suppliers, recentBatches, syncRuns, catalogProducts, supplierMetrics, productMetrics, replenishmentRequests, supplierOrders] = await Promise.all([
       prisma.supplier.findMany({
         where: { active: true },
         orderBy: { name: "asc" }
@@ -173,33 +197,8 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         take: 8,
         orderBy: { startedAt: "desc" }
       }),
-      prisma.product.findMany({
-        where: {
-          kind: "PARENT"
-        },
-        include: {
-          variants: {
-            include: {
-              assignments: {
-                include: {
-                  supplier: true
-                }
-              },
-              inventorySnapshots: {
-                orderBy: {
-                  syncedAt: "desc"
-                },
-                take: 1
-              }
-            },
-            orderBy: {
-              sku: "asc"
-            }
-          }
-        },
-        orderBy: {
-          updatedAt: "desc"
-        }
+      listFoundationCatalogProducts({
+        onlyActive: true
       }),
       prisma.supplierSalesMetricDaily.findMany({
         where: {
@@ -211,7 +210,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
       }),
       prisma.productSalesMetricDaily.findMany({
         where: {
-          date: { gte: windows.thirtyDaysAgo }
+          date: { gte: windows.oneYearAgo }
         },
         include: {
           catalogProduct: {
@@ -258,6 +257,25 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
     return getDemoAdminPageData();
   }
 
+  try {
+    const catalogVariantIds = catalogProducts.flatMap((product) => product.variants.map((variant) => variant.id));
+
+    variantMetrics = catalogVariantIds.length
+      ? await prisma.variantSalesMetricDaily.findMany({
+          where: {
+            variantId: {
+              in: catalogVariantIds
+            },
+            date: {
+              gte: windows.oneYearAgo
+            }
+          }
+        })
+      : [];
+  } catch {
+    return getDemoAdminPageData();
+  }
+
   const supplierMetricMap = new Map<string, typeof supplierMetrics>();
   for (const metric of supplierMetrics) {
     const list = supplierMetricMap.get(metric.supplierId) ?? [];
@@ -270,6 +288,13 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
     const list = productMetricMap.get(metric.catalogProductId) ?? [];
     list.push(metric);
     productMetricMap.set(metric.catalogProductId, list);
+  }
+
+  const variantMetricMap = new Map<string, typeof variantMetrics>();
+  for (const metric of variantMetrics) {
+    const list = variantMetricMap.get(metric.variantId) ?? [];
+    list.push(metric);
+    variantMetricMap.set(metric.variantId, list);
   }
 
   const linkedReplenishmentOrderMap = new Map<string, { orderNumber: string; financialStatusLabel: string | null }>();
@@ -347,71 +372,102 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
     }
   }
 
-  const productGroups = parentProducts.map((parent) => {
-    const supplierMap = new Map<string, { id: string; name: string }>();
-    let totalStock = 0;
-    let staleCount = 0;
+  const productGroups = catalogProducts.map((product) => {
+    const supplierMap = new Map(product.supplierLinks.map((link) => [link.id, { id: link.id, name: link.name }] as const));
+    const totalStock = product.totalStock;
+    let totalEstimatedCost = 0;
+    const colorSales = new Map<string, number>();
+    const sizeSales = new Map<string, number>();
 
-    for (const variant of parent.variants) {
-      const latestSnapshot = variant.inventorySnapshots[0];
-      totalStock += latestSnapshot?.quantity ?? variant.fallbackInventory ?? 0;
+    const variants = product.variants.map((variant) => {
+      const sales = buildSalesPeriodTotals(variantMetricMap.get(variant.id) ?? []);
+      const thresholds = resolveStockThresholds({
+        productCritical: variant.criticalStockThreshold,
+        productLow: variant.lowStockThreshold,
+        parentCritical: variant.parentCriticalStockThreshold,
+        parentLow: variant.parentLowStockThreshold
+      });
+      const band = getStockBand(variant.quantity, thresholds);
 
-      if (variant.syncStatus === "STALE" || variant.syncStatus === "ERROR") {
-        staleCount += 1;
-      }
+      totalEstimatedCost += (variant.quantity ?? 0) * (variant.costPrice ?? 0);
 
-      for (const assignment of variant.assignments) {
-        if (assignment.active) {
-          supplierMap.set(assignment.supplierId, {
-            id: assignment.supplierId,
-            name: assignment.supplier.name
-          });
-        }
-      }
-    }
+      const sales30d = sales["1m"];
+      colorSales.set(variant.colorLabel, (colorSales.get(variant.colorLabel) ?? 0) + sales30d);
+      sizeSales.set(variant.sizeLabel, (sizeSales.get(variant.sizeLabel) ?? 0) + sales30d);
+
+      return {
+        id: variant.id,
+        sku: variant.sku,
+        sizeCode: variant.sizeCode,
+        sizeLabel: variant.sizeLabel,
+        colorCode: variant.colorCode,
+        colorLabel: variant.colorLabel,
+        quantity: variant.quantity,
+        band,
+        sales,
+        unitCost: variant.costPrice,
+        criticalStockThreshold: variant.criticalStockThreshold,
+        lowStockThreshold: variant.lowStockThreshold,
+        effectiveCriticalStockThreshold: thresholds.critical,
+        effectiveLowStockThreshold: thresholds.low
+      };
+    });
+
+    const band: StockBand = variants.some((variant) => variant.band === "critical")
+      ? "critical"
+      : variants.some((variant) => variant.band === "low")
+        ? "low"
+        : variants.some((variant) => variant.band === "ok")
+          ? "ok"
+          : "unknown";
+    const sales = variants.reduce<SalesPeriodTotals>(
+      (current, variant) => ({
+        "1d": current["1d"] + variant.sales["1d"],
+        "7d": current["7d"] + variant.sales["7d"],
+        "1m": current["1m"] + variant.sales["1m"],
+        "3m": current["3m"] + variant.sales["3m"],
+        "6m": current["6m"] + variant.sales["6m"],
+        "1a": current["1a"] + variant.sales["1a"]
+      }),
+      { "1d": 0, "7d": 0, "1m": 0, "3m": 0, "6m": 0, "1a": 0 }
+    );
+    const coverageDays = safeCoverageDays(totalStock, sales["1m"]);
+    const topColorLabel =
+      [...colorSales.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+    const topSizeLabel =
+      [...sizeSales.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
 
     return {
-      id: parent.id,
-      parentSku: parent.sku,
-      internalName: parent.internalName,
-      imageUrl: parent.imageUrl ?? "/brand/pepper-logo.png",
-      active: parent.active,
-      criticalStockThreshold: parent.criticalStockThreshold,
-      lowStockThreshold: parent.lowStockThreshold,
-      variantCount: parent.variants.length,
+      id: product.sourceProductId ?? product.id,
+      parentSku: product.parentSku,
+      internalName: product.internalName,
+      imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
+      active: product.active,
+      criticalStockThreshold: product.variants[0]?.parentCriticalStockThreshold ?? null,
+      lowStockThreshold: product.variants[0]?.parentLowStockThreshold ?? null,
+      variantCount: product.variants.length,
       totalStock,
-      staleCount,
+      totalEstimatedCost,
+      staleCount: product.staleVariantCount,
+      band,
+      bandLabel: getStockBandLabel(band),
+      sales,
+      coverageDays,
+      movementBadge: getMovementBadge({
+        sales7d: sales["7d"],
+        sales30d: sales["1m"],
+        coverageDays,
+        stockBand: band
+      }),
+      topColorLabel,
+      topSizeLabel,
       supplierIds: Array.from(supplierMap.keys()),
       suppliers: Array.from(supplierMap.values()),
-      updatedAt: parent.updatedAt.toLocaleString("pt-BR"),
-      relatedOrderCount: relatedOrderCountBySku.get(parent.sku) ?? 0,
-      replenishmentCard: latestReplenishmentBySku.get(parent.sku) ?? null,
-      activeOrder: latestOrderBySku.get(parent.sku) ?? null,
-      variants: parent.variants.map((variant) => {
-        const latestSnapshot = variant.inventorySnapshots[0];
-        const quantity = latestSnapshot?.quantity ?? variant.fallbackInventory ?? null;
-        const thresholds = resolveStockThresholds({
-          productCritical: variant.criticalStockThreshold,
-          productLow: variant.lowStockThreshold,
-          parentCritical: parent.criticalStockThreshold,
-          parentLow: parent.lowStockThreshold
-        });
-
-        return {
-          id: variant.id,
-          sku: variant.sku,
-          sizeCode: variant.sizeCode,
-          sizeLabel: getSizeLabel(variant.sizeCode),
-          colorCode: variant.colorCode,
-          colorLabel: getColorLabel(variant.colorCode),
-          quantity,
-          band: getStockBand(quantity, thresholds),
-          criticalStockThreshold: variant.criticalStockThreshold,
-          lowStockThreshold: variant.lowStockThreshold,
-          effectiveCriticalStockThreshold: thresholds.critical,
-          effectiveLowStockThreshold: thresholds.low
-        };
-      })
+      updatedAt: (product.lastUpdatedAt ?? new Date()).toLocaleString("pt-BR"),
+      relatedOrderCount: relatedOrderCountBySku.get(product.parentSku) ?? 0,
+      replenishmentCard: latestReplenishmentBySku.get(product.parentSku) ?? null,
+      activeOrder: latestOrderBySku.get(product.parentSku) ?? null,
+      variants
     };
   });
 

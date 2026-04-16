@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, LoaderCircle, UploadCloud, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
@@ -89,6 +90,8 @@ function currency(value: number) {
   return `R$ ${value.toFixed(2).replace(".", ",")}`;
 }
 
+const SUPPLIER_FINANCIAL_FLASH_KEY = "supplier-financial:flash";
+
 export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierReceivedOrderRowV2[] }) {
   const [rows] = useState(orders);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -98,7 +101,9 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
   const [itemState, setItemState] = useState<Record<string, { fulfilledQuantity: number; itemStatus: string; supplierItemNote: string; confirmedUnitCost: number }>>({});
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<
+    "save" | "prepare" | "confirm" | "financial" | "shipped" | "no-stock" | null
+  >(null);
 
   const selectedOrder = rows.find((row) => row.id === selectedOrderId) ?? null;
 
@@ -122,6 +127,15 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
     }, 0);
   }, [itemState, selectedOrder]);
 
+  useEffect(() => {
+    const flash = window.sessionStorage.getItem(SUPPLIER_FINANCIAL_FLASH_KEY);
+
+    if (flash) {
+      setFeedback(flash);
+      window.sessionStorage.removeItem(SUPPLIER_FINANCIAL_FLASH_KEY);
+    }
+  }, []);
+
   async function submitUpdate(
     nextStatus: "SUPPLIER_REVIEWED" | "IN_PREPARATION" | "SHIPPED" | "NO_STOCK",
     workflowAction?: "PREPARE_ORDER" | "CONFIRM_SEPARATION" | "MARK_SHIPPED" | "MARK_NO_STOCK"
@@ -130,48 +144,78 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
 
     setFeedback(null);
     setError(null);
+    const action =
+      workflowAction === "PREPARE_ORDER"
+        ? "prepare"
+        : workflowAction === "CONFIRM_SEPARATION"
+          ? "confirm"
+          : workflowAction === "MARK_SHIPPED"
+            ? "shipped"
+            : workflowAction === "MARK_NO_STOCK"
+              ? "no-stock"
+              : "save";
+    setPendingAction(action);
 
-    const formData = new FormData();
-    formData.set("orderId", selectedOrder.id);
-    formData.set("supplierNote", supplierNote);
-    formData.set("expectedShipDate", expectedShipDate);
-    formData.set("supplierHasNoStock", supplierHasNoStock || nextStatus === "NO_STOCK" ? "true" : "false");
-    formData.set("status", nextStatus);
-    if (workflowAction) formData.set("workflowAction", workflowAction);
-    formData.set(
-      "itemsJson",
-      JSON.stringify(
-        selectedOrder.items.map((item) => {
-          const local = itemState[item.id];
-          return {
-            id: item.id,
-            fulfilledQuantity: local?.fulfilledQuantity ?? item.fulfilledQuantity,
-            itemStatus: (local?.itemStatus ?? item.itemStatus) as "PENDING" | "AVAILABLE" | "PARTIAL" | "NO_STOCK",
-            supplierItemNote: local?.supplierItemNote ?? item.supplierItemNote ?? "",
-            confirmedUnitCost: local?.confirmedUnitCost ?? item.confirmedUnitCost ?? item.unitCost
-          };
-        })
-      )
-    );
+    try {
+      const formData = new FormData();
+      formData.set("orderId", selectedOrder.id);
+      formData.set("supplierNote", supplierNote);
+      formData.set("expectedShipDate", expectedShipDate);
+      formData.set("supplierHasNoStock", supplierHasNoStock || nextStatus === "NO_STOCK" ? "true" : "false");
+      formData.set("status", nextStatus);
+      if (workflowAction) formData.set("workflowAction", workflowAction);
+      formData.set(
+        "itemsJson",
+        JSON.stringify(
+          selectedOrder.items.map((item) => {
+            const local = itemState[item.id];
+            return {
+              id: item.id,
+              fulfilledQuantity: local?.fulfilledQuantity ?? item.fulfilledQuantity,
+              itemStatus: (local?.itemStatus ?? item.itemStatus) as "PENDING" | "AVAILABLE" | "PARTIAL" | "NO_STOCK",
+              supplierItemNote: local?.supplierItemNote ?? item.supplierItemNote ?? "",
+              confirmedUnitCost: local?.confirmedUnitCost ?? item.confirmedUnitCost ?? item.unitCost
+            };
+          })
+        )
+      );
 
-    const romaneioInput = document.getElementById("romaneio-upload-v2") as HTMLInputElement | null;
-    const romaneio = romaneioInput?.files?.[0];
-    if (romaneio) formData.set("romaneio", romaneio);
+      const romaneioInput = document.getElementById("romaneio-upload-v2") as HTMLInputElement | null;
+      const romaneio = romaneioInput?.files?.[0];
+      if (romaneio) formData.set("romaneio", romaneio);
 
-    const response = await fetch("/api/supplier/supplier-orders", {
-      method: "PATCH",
-      body: formData
-    });
+      const response = await fetch("/api/supplier/supplier-orders", {
+        method: "PATCH",
+        body: formData
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        verification?: {
+          storedInFoundation: boolean;
+          visibleForAdminFinancial: boolean;
+          supplierWorkflowMoved: boolean;
+        };
+      };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel atualizar o pedido.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel atualizar o pedido.");
+        return;
+      }
+
+      const successMessage =
+        payload.verification?.storedInFoundation &&
+        payload.verification?.visibleForAdminFinancial &&
+        payload.verification?.supplierWorkflowMoved
+          ? "Pedido atualizado, validado na fundacao e refletido no fluxo operacional."
+          : "Pedido atualizado com sucesso.";
+      setFeedback(successMessage);
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel atualizar o pedido.");
+    } finally {
+      setPendingAction(null);
     }
-
-    setFeedback("Pedido atualizado com sucesso.");
-    window.location.reload();
   }
 
   async function submitToFinancial() {
@@ -179,36 +223,56 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
 
     setFeedback(null);
     setError(null);
+    setPendingAction("financial");
 
-    const formData = new FormData();
-    formData.set("orderId", selectedOrder.id);
-    formData.set("amount", String(computedConfirmedTotal || selectedOrder.confirmedTotalCost));
-    formData.set("note", supplierNote);
-    formData.set("supplierNote", supplierNote);
-    if (expectedShipDate) formData.set("dueDate", expectedShipDate);
+    try {
+      const formData = new FormData();
+      formData.set("orderId", selectedOrder.id);
+      formData.set("amount", String(computedConfirmedTotal || selectedOrder.confirmedTotalCost));
+      formData.set("note", supplierNote);
+      formData.set("supplierNote", supplierNote);
+      if (expectedShipDate) formData.set("dueDate", expectedShipDate);
 
-    const romaneioInput = document.getElementById("romaneio-upload-v2") as HTMLInputElement | null;
-    const notaInput = document.getElementById("nota-fiscal-upload-v2") as HTMLInputElement | null;
-    const romaneio = romaneioInput?.files?.[0];
-    const notaFiscal = notaInput?.files?.[0];
+      const romaneioInput = document.getElementById("romaneio-upload-v2") as HTMLInputElement | null;
+      const notaInput = document.getElementById("nota-fiscal-upload-v2") as HTMLInputElement | null;
+      const romaneio = romaneioInput?.files?.[0];
+      const notaFiscal = notaInput?.files?.[0];
 
-    if (romaneio) formData.set("romaneio", romaneio);
-    if (notaFiscal) formData.set("notaFiscal", notaFiscal);
+      if (romaneio) formData.set("romaneio", romaneio);
+      if (notaFiscal) formData.set("notaFiscal", notaFiscal);
 
-    const response = await fetch("/api/supplier/financial-entries", {
-      method: "POST",
-      body: formData
-    });
+      const response = await fetch("/api/supplier/financial-entries", {
+        method: "POST",
+        body: formData
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        verification?: {
+          storedInFoundation?: boolean;
+          visibleForAdminFinancial?: boolean;
+          supplierWorkflowMoved?: boolean;
+        };
+      };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel enviar o pedido para o financeiro.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel enviar o pedido para o financeiro.");
+        return;
+      }
+
+      const successMessage =
+        payload.verification?.storedInFoundation &&
+        payload.verification?.visibleForAdminFinancial &&
+        payload.verification?.supplierWorkflowMoved
+          ? "Pedido enviado ao financeiro, validado na fundacao e ja visivel para o admin."
+          : "Pedido enviado para revisao financeira.";
+      window.sessionStorage.setItem(SUPPLIER_FINANCIAL_FLASH_KEY, successMessage);
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel enviar o pedido para o financeiro.");
+    } finally {
+      setPendingAction(null);
     }
-
-    setFeedback("Pedido enviado para revisao financeira.");
-    window.location.reload();
   }
 
   function openOrder(order: SupplierReceivedOrderRowV2) {
@@ -266,9 +330,20 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
                   className="rounded-[1.6rem] border border-slate-100 bg-slate-50/80 p-4 text-left transition hover:-translate-y-0.5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{order.orderNumber}</p>
-                      <p className="text-xs text-slate-500">{order.originLabel}</p>
+                    <div className="flex items-start gap-3">
+                      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white bg-white shadow-sm">
+                        <Image
+                          src={order.imageUrl ?? "/brand/pepper-logo.png"}
+                          alt={order.productName}
+                          fill
+                          className="object-cover p-1.5"
+                          sizes="56px"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{order.orderNumber}</p>
+                        <p className="text-xs text-slate-500">{order.originLabel}</p>
+                      </div>
                     </div>
                     <span className={cn("rounded-full px-3 py-1 text-[11px] font-semibold", getSupplierOrderWorkflowTone(order.workflowStage as never))}>
                       {order.workflowStageLabel}
@@ -309,10 +384,21 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
           <div className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[2rem] border border-white/60 bg-white/95 p-6 shadow-panel">
             <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Resumo operacional</p>
-                <h3 className="mt-2 text-2xl font-semibold text-slate-900">{selectedOrder.productName}</h3>
-                <p className="mt-1 text-sm text-slate-500">{selectedOrder.orderNumber} • {selectedOrder.originLabel}</p>
+              <div className="flex items-start gap-4">
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-3xl border border-white bg-white shadow-sm">
+                  <Image
+                    src={selectedOrder.imageUrl ?? "/brand/pepper-logo.png"}
+                    alt={selectedOrder.productName}
+                    fill
+                    className="object-cover p-2"
+                    sizes="80px"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Resumo operacional</p>
+                  <h3 className="mt-2 text-2xl font-semibold text-slate-900">{selectedOrder.productName}</h3>
+                  <p className="mt-1 text-sm text-slate-500">{selectedOrder.orderNumber} • {selectedOrder.originLabel}</p>
+                </div>
               </div>
               <button type="button" onClick={() => setSelectedOrderId(null)} className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-500">
                 <X className="h-4 w-4" />
@@ -451,64 +537,70 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
-                    onClick={() => startTransition(() => void submitUpdate("SUPPLIER_REVIEWED"))}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                    disabled={pendingAction !== null}
+                    onClick={() => void submitUpdate("SUPPLIER_REVIEWED")}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                    Salvar ajustes
+                    {pendingAction === "save" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {pendingAction === "save" ? "Salvando..." : "Salvar ajustes"}
                   </button>
 
                   {(selectedOrder.workflowStage === "AWAITING_RESPONSE" || selectedOrder.workflowStage === "NO_STOCK") ? (
                     <button
                       type="button"
-                      onClick={() => startTransition(() => void submitUpdate("IN_PREPARATION", "PREPARE_ORDER"))}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white"
+                      disabled={pendingAction !== null}
+                      onClick={() => void submitUpdate("IN_PREPARATION", "PREPARE_ORDER")}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Em preparação
+                      {pendingAction === "prepare" ? "Preparando..." : "Em preparação"}
                     </button>
                   ) : null}
 
                   {selectedOrder.workflowStage === "IN_PREPARATION" ? (
                     <button
                       type="button"
-                      onClick={() => startTransition(() => void submitUpdate("SUPPLIER_REVIEWED", "CONFIRM_SEPARATION"))}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white"
+                      disabled={pendingAction !== null}
+                      onClick={() => void submitUpdate("SUPPLIER_REVIEWED", "CONFIRM_SEPARATION")}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Confirmar separação
+                      {pendingAction === "confirm" ? "Confirmando..." : "Confirmar separação"}
                     </button>
                   ) : null}
 
                   {selectedOrder.workflowStage === "SEPARATION_CONFIRMED" && !selectedOrder.financialEntry ? (
                     <button
                       type="button"
-                      onClick={() => startTransition(() => void submitToFinancial())}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white"
+                      disabled={pendingAction !== null}
+                      onClick={() => void submitToFinancial()}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <Wallet className="h-4 w-4" />
-                      Enviar para financeiro
+                      {pendingAction === "financial" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Wallet className="h-4 w-4" />}
+                      {pendingAction === "financial" ? "Enviando..." : "Enviar para financeiro"}
                     </button>
                   ) : null}
 
                   {selectedOrder.workflowStage === "PAID" ? (
                     <button
                       type="button"
-                      onClick={() => startTransition(() => void submitUpdate("SHIPPED", "MARK_SHIPPED"))}
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white"
+                      disabled={pendingAction !== null}
+                      onClick={() => void submitUpdate("SHIPPED", "MARK_SHIPPED")}
+                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <UploadCloud className="h-4 w-4" />
-                      Marcar enviado
+                      {pendingAction === "shipped" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                      {pendingAction === "shipped" ? "Enviando..." : "Marcar enviado"}
                     </button>
                   ) : null}
 
                   <button
                     type="button"
+                    disabled={pendingAction !== null}
                     onClick={() => {
                       setSupplierHasNoStock(true);
-                      startTransition(() => void submitUpdate("NO_STOCK", "MARK_NO_STOCK"));
+                      void submitUpdate("NO_STOCK", "MARK_NO_STOCK");
                     }}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white"
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Sem estoque total
+                    {pendingAction === "no-stock" ? "Marcando..." : "Sem estoque total"}
                   </button>
                 </div>
               </div>
@@ -531,3 +623,5 @@ export function SupplierReceivedOrdersPanelV2({ orders }: { orders: SupplierRece
     </section>
   );
 }
+
+

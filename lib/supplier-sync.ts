@@ -1,8 +1,8 @@
 import { InventorySyncStatus } from "@prisma/client";
-import { syncCatalogVariantInventory } from "@/lib/catalog-sync";
+import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
 import { prisma } from "@/lib/prisma";
-import { getStockBand, resolveStockThresholds } from "@/lib/stock";
 import { getTinyStockByProductId, isTinyConfigured } from "@/lib/tiny";
+import { persistFoundationVariantInventory } from "@/lib/tiny-stock-events";
 
 const SYNC_THROTTLE_MS = 1000 * 60 * 3;
 
@@ -35,28 +35,12 @@ export async function syncSupplierInventory(params: {
     };
   }
 
-  const variants = await prisma.product.findMany({
-    where: {
-      kind: "VARIANT",
-      active: true,
-      archivedAt: null,
-      assignments: {
-        some: {
-          supplierId: params.supplierId,
-          active: true
-        }
-      }
-    },
-    include: {
-      parent: true,
-      inventorySnapshots: {
-        orderBy: {
-          syncedAt: "desc"
-        },
-        take: 1
-      }
-    }
+  const foundationProducts = await listFoundationCatalogProducts({
+    supplierId: params.supplierId,
+    onlyActive: true
   });
+
+  const variants = foundationProducts.flatMap((product) => product.variants);
 
   const run = await prisma.syncRun.create({
     data: {
@@ -72,82 +56,27 @@ export async function syncSupplierInventory(params: {
   try {
     for (const variant of variants) {
       if (!variant.tinyProductId) {
-        await prisma.product.update({
-          where: { id: variant.id },
-          data: {
-            syncStatus: InventorySyncStatus.ERROR
-          }
-        });
         stale += 1;
         continue;
       }
 
       try {
         const quantity = await getTinyStockByProductId(variant.tinyProductId);
-        const thresholds = resolveStockThresholds({
-          productCritical: variant.criticalStockThreshold,
-          productLow: variant.lowStockThreshold,
-          parentCritical: variant.parent?.criticalStockThreshold,
-          parentLow: variant.parent?.lowStockThreshold
-        });
-
-        await prisma.inventorySnapshot.create({
-          data: {
-            productId: variant.id,
-            quantity,
-            status: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-            stockBand: getStockBand(quantity, thresholds)
-          }
-        });
-
-        await prisma.product.update({
-          where: { id: variant.id },
-          data: {
-            fallbackInventory: quantity ?? variant.fallbackInventory,
-            lastSyncedAt: new Date(),
-            syncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH
-          }
-        });
-
-        await syncCatalogVariantInventory(prisma, {
-          sourceProductId: variant.id,
-          availableMultiCompanyStock: quantity,
-          stockStatus: getStockBand(quantity, thresholds),
-          inventorySyncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
+        await persistFoundationVariantInventory({
+          catalogVariantId: variant.id,
+          quantity,
+          syncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
           syncedAt: new Date()
         });
 
         updated += 1;
       } catch {
-        const fallbackQuantity = variant.inventorySnapshots[0]?.quantity ?? variant.fallbackInventory ?? null;
-        const thresholds = resolveStockThresholds({
-          productCritical: variant.criticalStockThreshold,
-          productLow: variant.lowStockThreshold,
-          parentCritical: variant.parent?.criticalStockThreshold,
-          parentLow: variant.parent?.lowStockThreshold
-        });
+        const fallbackQuantity = variant.quantity ?? null;
 
-        await prisma.inventorySnapshot.create({
-          data: {
-            productId: variant.id,
-            quantity: fallbackQuantity,
-            status: InventorySyncStatus.ERROR,
-            stockBand: getStockBand(fallbackQuantity, thresholds)
-          }
-        });
-
-        await prisma.product.update({
-          where: { id: variant.id },
-          data: {
-            syncStatus: InventorySyncStatus.STALE
-          }
-        });
-
-        await syncCatalogVariantInventory(prisma, {
-          sourceProductId: variant.id,
-          availableMultiCompanyStock: fallbackQuantity,
-          stockStatus: getStockBand(fallbackQuantity, thresholds),
-          inventorySyncStatus: InventorySyncStatus.ERROR,
+        await persistFoundationVariantInventory({
+          catalogVariantId: variant.id,
+          quantity: fallbackQuantity,
+          syncStatus: InventorySyncStatus.ERROR,
           syncedAt: new Date()
         });
 

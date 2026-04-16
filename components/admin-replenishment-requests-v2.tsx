@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { CheckCircle2, Download, LoaderCircle, ShoppingCart, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getReplenishmentNextStep, getSupplierOrderWorkflowTone } from "@/lib/operations-workflow";
@@ -58,7 +58,7 @@ export function AdminReplenishmentRequestsV2({ requests }: { requests: RequestRo
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [pendingStatus, setPendingStatus] = useState<"APPROVED" | "REJECTED" | null>(null);
 
   const summary = useMemo(
     () => ({
@@ -75,26 +75,33 @@ export function AdminReplenishmentRequestsV2({ requests }: { requests: RequestRo
   async function updateStatus(id: string, status: "APPROVED" | "REJECTED") {
     setFeedback(null);
     setError(null);
+    setPendingStatus(status);
 
-    const response = await fetch("/api/admin/replenishment-requests", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status })
-    });
+    try {
+      const response = await fetch("/api/admin/replenishment-requests", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status })
+      });
 
-    const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string };
 
-    if (!response.ok) {
-      setError(payload.error ?? "Nao foi possivel atualizar a solicitacao.");
-      return;
+      if (!response.ok) {
+        setError(payload.error ?? "Nao foi possivel atualizar a solicitacao.");
+        return;
+      }
+
+      setFeedback(
+        status === "APPROVED"
+          ? "Sugestao de compra aprovada. O card ja pode seguir para pedido ao fornecedor."
+          : "Sugestao de compra recusada com sucesso."
+      );
+      window.location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Nao foi possivel atualizar a solicitacao.");
+    } finally {
+      setPendingStatus(null);
     }
-
-    setFeedback(
-      status === "APPROVED"
-        ? "Sugestao de compra aprovada. O card ja pode seguir para pedido ao fornecedor."
-        : "Sugestao de compra recusada com sucesso."
-    );
-    window.location.reload();
   }
 
   function downloadHtml(request: RequestRow) {
@@ -333,24 +340,24 @@ export function AdminReplenishmentRequestsV2({ requests }: { requests: RequestRo
                   {selectedRequest.status !== "APPROVED" ? (
                     <button
                       type="button"
-                      disabled={isPending}
-                      onClick={() => startTransition(() => void updateStatus(selectedRequest.id, "APPROVED"))}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                      disabled={pendingStatus !== null}
+                      onClick={() => void updateStatus(selectedRequest.id, "APPROVED")}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                      Aprovar
+                      {pendingStatus === "APPROVED" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      {pendingStatus === "APPROVED" ? "Aprovando..." : "Aprovar"}
                     </button>
                   ) : null}
 
                   {selectedRequest.status !== "REJECTED" ? (
                     <button
                       type="button"
-                      disabled={isPending}
-                      onClick={() => startTransition(() => void updateStatus(selectedRequest.id, "REJECTED"))}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                      disabled={pendingStatus !== null}
+                      onClick={() => void updateStatus(selectedRequest.id, "REJECTED")}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <XCircle className="h-4 w-4" />
-                      Recusar
+                      {pendingStatus === "REJECTED" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                      {pendingStatus === "REJECTED" ? "Recusando..." : "Recusar"}
                     </button>
                   ) : null}
                 </div>

@@ -1,8 +1,54 @@
 import { ReplenishmentRequestStatus } from "@prisma/client";
+import { getLocalReplenishmentRequests, getLocalOperationsSnapshot } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
+import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getSupplierOrderWorkflowLabel } from "@/lib/operations-workflow";
 
 export async function getAdminReplenishmentRequests() {
+  if (isLocalOperationalMode()) {
+    const [requests, snapshot] = await Promise.all([getLocalReplenishmentRequests(), getLocalOperationsSnapshot()]);
+    return requests.map((request) => {
+      const linkedOrder = request.linkedOrderId
+        ? snapshot.orders.find((order) => order.id === request.linkedOrderId) ?? null
+        : null;
+
+      return {
+        statusLabel: getReplenishmentStatusLabel(request.status),
+        id: request.id,
+        supplierName: request.supplierName,
+        createdBy: request.createdByUsername,
+        reviewedBy: request.reviewedByUsername,
+        productName: request.productName,
+        productSku: request.productSku,
+        imageUrl: request.imageUrl,
+        note: request.note,
+        status: request.status,
+        htmlContent: request.htmlContent,
+        createdAt: request.createdAt,
+        reviewedAt: request.reviewedAt,
+        requestedUnits: request.items.reduce((sum, item) => sum + item.requestedQuantity, 0),
+        linkedOrder: linkedOrder
+          ? {
+              id: linkedOrder.id,
+              orderNumber: linkedOrder.orderNumber,
+              workflowStage: linkedOrder.workflowStage,
+              workflowStageLabel: linkedOrder.workflowStageLabel,
+              financialStatus: linkedOrder.financialEntry?.status ?? null,
+              hasFinancialEntry: Boolean(linkedOrder.financialEntry)
+            }
+          : null,
+        items: request.items.map((item) => ({
+          id: item.id,
+          sku: item.sku,
+          size: item.size,
+          color: item.color,
+          currentStock: item.currentStock,
+          requestedQuantity: item.requestedQuantity
+        }))
+      };
+    });
+  }
+
   try {
     const requests = await prisma.replenishmentRequest.findMany({
       include: {

@@ -4,6 +4,19 @@ import { z } from "zod";
 import { encodeSession, getSessionCookieName, verifyPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string) {
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  return Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
+    })
+  ]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
 const bodySchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
@@ -11,7 +24,15 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const body = bodySchema.safeParse(await request.json());
+  let payload: unknown;
+
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Preencha usuario e senha." }, { status: 400 });
+  }
+
+  const body = bodySchema.safeParse(payload);
 
   if (!body.success) {
     return NextResponse.json({ error: "Preencha usuario e senha." }, { status: 400 });
@@ -25,11 +46,15 @@ export async function POST(request: Request) {
   const shouldUseSecureCookie = process.env.NODE_ENV === "production" && !isLocalPreviewHost;
 
   try {
-    user = await prisma.user.findUnique({
-      where: {
-        username: body.data.username
-      }
-    });
+    user = await withTimeout(
+      prisma.user.findUnique({
+        where: {
+          username: body.data.username
+        }
+      }),
+      5000,
+      "login_lookup"
+    );
   } catch {
     if (!allowDemoAuth) {
       return NextResponse.json({ error: "Login indisponivel no momento. Tente novamente em instantes." }, { status: 503 });
@@ -69,10 +94,14 @@ export async function POST(request: Request) {
   });
 
   try {
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() }
-    });
+    await withTimeout(
+      prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() }
+      }),
+      3000,
+      "login_touch"
+    );
   } catch {
     // Local preview may run on a degraded SQLite file; login should still succeed.
   }

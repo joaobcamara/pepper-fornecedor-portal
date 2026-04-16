@@ -24,6 +24,11 @@ enum InventorySyncStatus {
   ERROR
 }
 
+enum PepperTinyAccountRole {
+  MATRIX
+  DEPENDENT
+}
+
 enum ConversationStatus {
   OPEN
   ARCHIVED
@@ -157,6 +162,46 @@ enum SupplierFinancialAttachmentKind {
   ROMANEIO
   NOTA_FISCAL
   COMPROVANTE
+}
+
+model PepperSizeReference {
+  code       String   @id
+  label      String
+  sortOrder  Int
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model PepperColorReference {
+  code       String   @id
+  label      String
+  sortOrder  Int
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+model PepperTinyAccountReference {
+  key                        String                @id
+  label                      String
+  role                       PepperTinyAccountRole
+  sortOrder                  Int
+  active                     Boolean               @default(true)
+  sharesGroupStock           Boolean               @default(true)
+  readsAvailableMultiCompany Boolean               @default(false)
+  handlesCatalogImport       Boolean               @default(false)
+  handlesPhysicalStock       Boolean               @default(false)
+  zeroBalanceOnCount         Boolean               @default(false)
+  salesAffectSharedStock     Boolean               @default(true)
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+
+  @@index([active, sortOrder])
 }
 
 model User {
@@ -339,28 +384,47 @@ model TinyImportItem {
 model TinyWebhookLog {
   id             String   @id @default(cuid())
   webhookType    String
+  accountKey     String?
   eventType      String?
+  entityType     String?
+  entityId       String?
   sku            String?
   tinyProductId  String?
+  fingerprint    String?
+  duplicateOfId  String?
   status         String
+  processingStage String?
   errorMessage   String?
   payload        String
   processedAt    DateTime?
   createdAt      DateTime @default(now())
 
   @@index([webhookType, createdAt])
+  @@index([webhookType, accountKey, createdAt])
+  @@index([webhookType, accountKey, fingerprint])
+  @@index([entityType, entityId])
+  @@index([duplicateOfId])
   @@index([sku])
 }
 
 model SyncRun {
   id                String   @id @default(cuid())
   triggerType       String
+  scope             String?
+  accountKey        String?
+  entityType        String?
+  entityId          String?
   status            String
+  metadata          String?
   startedAt         DateTime @default(now())
   finishedAt        DateTime?
   errorMessage      String?
   requestedByUserId String?
   requestedByUser   User?    @relation(fields: [requestedByUserId], references: [id])
+
+  @@index([scope, startedAt])
+  @@index([accountKey, startedAt])
+  @@index([entityType, entityId])
 }
 
 model SalesOrder {
@@ -1078,6 +1142,7 @@ model CatalogAttribute {
 
 model CatalogTinyMapping {
   id                String          @id @default(cuid())
+  accountKey        String          @default("pepper")
   entityType        String
   catalogProductId  String?
   catalogVariantId  String?
@@ -1092,9 +1157,10 @@ model CatalogTinyMapping {
   catalogProduct    CatalogProduct? @relation(fields: [catalogProductId], references: [id])
   catalogVariant    CatalogVariant? @relation(fields: [catalogVariantId], references: [id])
 
-  @@unique([entityType, sku])
+  @@unique([accountKey, entityType, sku])
   @@index([catalogProductId])
   @@index([catalogVariantId])
+  @@index([accountKey, tinyId])
 }
 
 model CatalogProductSupplier {

@@ -180,7 +180,15 @@ export function getDemoAdminPageData(): AdminDashboardData {
         lowStockThreshold: 8,
         variantCount: 5,
         totalStock: 18,
+        totalEstimatedCost: 718.2,
         staleCount: 1,
+        band: "critical" as const,
+        bandLabel: "Crítico",
+        sales: { "1d": 3, "7d": 12, "1m": 24, "3m": 54, "6m": 87, "1a": 131 },
+        coverageDays: 22.5,
+        movementBadge: "Atencao reposicao",
+        topColorLabel: "Preto",
+        topSizeLabel: "M",
         supplierIds: ["demo-supplier-id"],
         suppliers: [{ id: "demo-supplier-id", name: "Luna Textil" }],
         updatedAt: "13/04/2026 03:00:00",
@@ -204,7 +212,88 @@ export function getDemoAdminPageData(): AdminDashboardData {
           supplierName: "Luna Textil",
           originLabel: "Sugestao de compra"
         },
-        variants: []
+        variants: [
+          {
+            id: "demo-variant-1",
+            sku: "01-2504-21-01",
+            sizeCode: "21",
+            sizeLabel: "P",
+            colorCode: "01",
+            colorLabel: "Preto",
+            quantity: 3,
+            band: "low" as const,
+            sales: { "1d": 0, "7d": 2, "1m": 4, "3m": 9, "6m": 16, "1a": 24 },
+            unitCost: 39.9,
+            criticalStockThreshold: 1,
+            lowStockThreshold: 4,
+            effectiveCriticalStockThreshold: 1,
+            effectiveLowStockThreshold: 4
+          },
+          {
+            id: "demo-variant-2",
+            sku: "01-2504-22-01",
+            sizeCode: "22",
+            sizeLabel: "M",
+            colorCode: "01",
+            colorLabel: "Preto",
+            quantity: 2,
+            band: "critical" as const,
+            sales: { "1d": 1, "7d": 4, "1m": 9, "3m": 18, "6m": 28, "1a": 41 },
+            unitCost: 39.9,
+            criticalStockThreshold: 2,
+            lowStockThreshold: 5,
+            effectiveCriticalStockThreshold: 2,
+            effectiveLowStockThreshold: 5
+          },
+          {
+            id: "demo-variant-3",
+            sku: "01-2504-23-01",
+            sizeCode: "23",
+            sizeLabel: "G",
+            colorCode: "01",
+            colorLabel: "Preto",
+            quantity: 5,
+            band: "low" as const,
+            sales: { "1d": 0, "7d": 1, "1m": 3, "3m": 7, "6m": 12, "1a": 19 },
+            unitCost: 39.9,
+            criticalStockThreshold: null,
+            lowStockThreshold: null,
+            effectiveCriticalStockThreshold: 2,
+            effectiveLowStockThreshold: 8
+          },
+          {
+            id: "demo-variant-4",
+            sku: "01-2504-21-03",
+            sizeCode: "21",
+            sizeLabel: "P",
+            colorCode: "03",
+            colorLabel: "Vermelho",
+            quantity: 4,
+            band: "low" as const,
+            sales: { "1d": 1, "7d": 3, "1m": 5, "3m": 12, "6m": 20, "1a": 30 },
+            unitCost: 39.9,
+            criticalStockThreshold: null,
+            lowStockThreshold: null,
+            effectiveCriticalStockThreshold: 2,
+            effectiveLowStockThreshold: 8
+          },
+          {
+            id: "demo-variant-5",
+            sku: "01-2504-22-03",
+            sizeCode: "22",
+            sizeLabel: "M",
+            colorCode: "03",
+            colorLabel: "Vermelho",
+            quantity: 4,
+            band: "low" as const,
+            sales: { "1d": 1, "7d": 2, "1m": 3, "3m": 8, "6m": 11, "1a": 17 },
+            unitCost: 39.9,
+            criticalStockThreshold: null,
+            lowStockThreshold: null,
+            effectiveCriticalStockThreshold: 2,
+            effectiveLowStockThreshold: 8
+          }
+        ]
       }
     ],
     dashboard: {
@@ -282,4 +371,144 @@ export function getDemoAdminPageData(): AdminDashboardData {
 
 export function getDemoUnreadCount() {
   return 1;
+}
+
+export function getDemoSupplierDirectory() {
+  return [
+    {
+      id: "demo-supplier-id",
+      name: "Luna Textil",
+      slug: "luna-textil",
+      logoUrl: null,
+      contactName: "Carol Aguiar",
+      contactPhone: "(85) 99999-9999",
+      contactEmail: "contato@lunatextil.com.br",
+      address: "Rua das Industrias, 150 - Fortaleza/CE",
+      active: true,
+      canViewProductValues: false,
+      canViewFinancialDashboard: false,
+      productCount: 5,
+      userCount: 1,
+      createdAt: "15/04/2026"
+    }
+  ];
+}
+
+export function getDemoAdminSupplierOrdersData() {
+  return {
+    suppliers: [
+      {
+        id: "demo-supplier-id",
+        name: "Luna Textil",
+        slug: "luna-textil"
+      }
+    ],
+    products: [
+      {
+        id: "demo-parent-1",
+        supplierId: "demo-supplier-id",
+        supplierName: "Luna Textil",
+        productName: "Conjunto Fitness Aura",
+        productSku: "01-2504",
+        imageUrl: "/brand/pepper-logo.png",
+        variants: [
+          { id: "demo-variant-1", sku: "01-2504-21-01", color: "Preto", size: "P", unitCost: 39.9, currentStock: 3, sales: { "1d": 0, "7d": 2, "1m": 4, "3m": 9, "6m": 16, "1a": 24 } },
+          { id: "demo-variant-2", sku: "01-2504-22-01", color: "Preto", size: "M", unitCost: 39.9, currentStock: 2, sales: { "1d": 1, "7d": 4, "1m": 9, "3m": 18, "6m": 28, "1a": 41 } },
+          { id: "demo-variant-3", sku: "01-2504-23-01", color: "Preto", size: "G", unitCost: 39.9, currentStock: 5, sales: { "1d": 0, "7d": 1, "1m": 3, "3m": 7, "6m": 12, "1a": 19 } },
+          { id: "demo-variant-4", sku: "01-2504-21-03", color: "Vermelho", size: "P", unitCost: 39.9, currentStock: 4, sales: { "1d": 1, "7d": 3, "1m": 5, "3m": 12, "6m": 20, "1a": 30 } },
+          { id: "demo-variant-5", sku: "01-2504-22-03", color: "Vermelho", size: "M", unitCost: 39.9, currentStock: 4, sales: { "1d": 1, "7d": 2, "1m": 3, "3m": 8, "6m": 11, "1a": 17 } }
+        ]
+      }
+    ],
+    orders: [
+      {
+        id: "demo-order-admin-1",
+        orderNumber: "PF-20260413-DEMO",
+        supplierId: "demo-supplier-id",
+        supplierName: "Luna Textil",
+        productName: "Conjunto Fitness Aura",
+        productSku: "01-2504",
+        imageUrl: "/brand/pepper-logo.png",
+        status: "IN_PREPARATION",
+        statusLabel: "Em preparacao",
+        workflowStage: "IN_PREPARATION",
+        workflowStageLabel: "Em preparacao",
+        originType: "REPLENISHMENT_REQUEST",
+        originLabel: "Sugestao de compra",
+        adminNote: "Pedido demo para simular o fluxo local.",
+        supplierNote: "Separacao em andamento.",
+        supplierHasNoStock: false,
+        createdAt: "13/04/2026 10:00:00",
+        respondedAt: "13/04/2026 10:20:00",
+        shippedAt: null,
+        expectedShipDate: "16/04/2026",
+        separationConfirmedAt: null,
+        sentToFinancialAt: null,
+        paidAt: null,
+        estimatedTotalCost: 199.5,
+        estimatedTotalCostLabel: "R$ 199,50",
+        confirmedTotalCost: 0,
+        confirmedTotalCostLabel: "R$ 0,00",
+        createdBy: "admin",
+        updatedBy: "luna",
+        hasRomaneio: false,
+        financialEntry: null,
+        attachments: [],
+        history: [
+          {
+            id: "demo-order-history-1",
+            fromStatus: null,
+            toStatus: "AWAITING_SUPPLIER",
+            toStatusLabel: "Aguardando resposta",
+            note: "Pedido demo criado para validacao local.",
+            createdAt: "13/04/2026 10:00:00"
+          }
+        ],
+        workflowHistory: [
+          {
+            id: "demo-order-workflow-1",
+            fromStage: null,
+            toStage: "IN_PREPARATION",
+            toStageLabel: "Em preparacao",
+            note: "Fornecedor iniciou a separacao do pedido demo.",
+            createdAt: "13/04/2026 10:20:00"
+          }
+        ],
+        items: [
+          {
+            id: "demo-order-item-1",
+            sku: "01-2504-22-01",
+            color: "Preto",
+            size: "M",
+            productName: "Conjunto Fitness Aura M Preto",
+            requestedQuantity: 3,
+            fulfilledQuantity: 0,
+            itemStatus: "PENDING",
+            itemStatusLabel: "Pendente",
+            unitCost: 39.9,
+            requestedTotalCost: 119.7,
+            confirmedUnitCost: null,
+            confirmedTotalCost: 0,
+            supplierItemNote: null
+          },
+          {
+            id: "demo-order-item-2",
+            sku: "01-2504-22-03",
+            color: "Vermelho",
+            size: "M",
+            productName: "Conjunto Fitness Aura M Vermelho",
+            requestedQuantity: 2,
+            fulfilledQuantity: 0,
+            itemStatus: "PENDING",
+            itemStatusLabel: "Pendente",
+            unitCost: 39.9,
+            requestedTotalCost: 79.8,
+            confirmedUnitCost: null,
+            confirmedTotalCost: 0,
+            supplierItemNote: null
+          }
+        ]
+      }
+    ]
+  };
 }
