@@ -646,12 +646,19 @@ export async function reconcileVariantInventory(params: {
 
   try {
     for (const variant of variants) {
-      if (!variant.tinyProductId) {
-        continue;
-      }
-
       try {
-        const quantity = await getTinyStockByProductId(variant.tinyProductId);
+        const refreshProductId = await resolveTinyProductIdForStockRefresh({
+          catalogVariantId: variant.id,
+          accountKey: getPepperPhysicalStockAccountKey(),
+          sku: variant.sku,
+          tinyProductId: variant.tinyProductId
+        });
+
+        if (!refreshProductId) {
+          throw new Error("Produto nao localizado para reconciliacao.");
+        }
+
+        const quantity = await getTinyStockByProductId(refreshProductId, getPepperPhysicalStockAccountKey());
         await persistFoundationVariantInventory({
           catalogVariantId: variant.id,
           quantity,
