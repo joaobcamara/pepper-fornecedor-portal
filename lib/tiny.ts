@@ -4,6 +4,7 @@ import {
   getPepperCatalogImportAccountKey,
   getPepperTinyAccountLabel,
   PEPPER_TINY_ACCOUNT_REFERENCES,
+  shouldReadAvailableMultiCompanyStock,
   type PepperTinyAccountKey
 } from "@/lib/pepper-tiny-account-data";
 import { prisma } from "@/lib/prisma";
@@ -341,6 +342,57 @@ function extractParentTinyId(record: Record<string, unknown>) {
   );
 }
 
+function normalizeTinyFieldKey(key: string) {
+  return key
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+}
+
+function extractNumericByKeyPattern(value: unknown, matcher: (normalizedKey: string) => boolean): number | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const queue: unknown[] = [value];
+  const visited = new Set<unknown>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+
+    if (!current || typeof current !== "object" || visited.has(current)) {
+      continue;
+    }
+
+    visited.add(current);
+
+    if (Array.isArray(current)) {
+      for (const entry of current) {
+        queue.push(entry);
+      }
+
+      continue;
+    }
+
+    for (const [key, entry] of Object.entries(current)) {
+      const normalizedKey = normalizeTinyFieldKey(key);
+      if (matcher(normalizedKey)) {
+        const parsed = toNumberValue(entry);
+        if (parsed !== null) {
+          return parsed;
+        }
+      }
+
+      if (entry && typeof entry === "object") {
+        queue.push(entry);
+      }
+    }
+  }
+
+  return null;
+}
+
 function normalizeSearchCandidate(record: Record<string, unknown>): TinySearchCandidate | null {
   const id = toStringValue(record.id);
   const sku = normalizeSku(toStringValue(record.codigo) ?? toStringValue(record.sku) ?? "");
@@ -418,13 +470,35 @@ async function getTinyProductStructureById(id: string, accountKey: TinyAccountKe
     .filter(Boolean) as TinyStructureRef[];
 }
 
-function extractStockQuantity(payload: TinyApiEnvelope) {
+function extractStockQuantity(payload: TinyApiEnvelope, accountKey: TinyAccountKey = "pepper") {
   const entries =
     (Array.isArray(payload.retorno?.produtos) ? payload.retorno?.produtos : undefined) ??
     (payload.retorno?.produto ? [payload.retorno.produto] : []);
 
   for (const entry of entries) {
     const item = unwrapTinyItem(entry);
+    const preferMultiCompany = shouldReadAvailableMultiCompanyStock(accountKey);
+
+    if (preferMultiCompany) {
+      const multiCompany = extractNumericByKeyPattern(item, (normalizedKey) => {
+        const mentionsMultiCompany =
+          normalizedKey.includes("multiempresa") ||
+          normalizedKey.includes("multempresa") ||
+          normalizedKey.includes("multicompany") ||
+          normalizedKey.includes("compartilhado");
+        const mentionsStock =
+          normalizedKey.includes("saldo") ||
+          normalizedKey.includes("estoque") ||
+          normalizedKey.includes("disponivel");
+
+        return mentionsMultiCompany && mentionsStock;
+      });
+
+      if (multiCompany !== null) {
+        return multiCompany;
+      }
+    }
+
     const direct = toNumberValue(item.saldo) ?? toNumberValue(item.estoque);
 
     if (direct !== null) {
@@ -656,7 +730,7 @@ export async function getTinyContactById(id: string, accountKey: TinyAccountKey 
 
 export async function getTinyStockByProductId(id: string, accountKey: TinyAccountKey = "pepper") {
   const payload = await callTiny("produto.obter.estoque.php", { id }, accountKey);
-  return extractStockQuantity(payload);
+  return extractStockQuantity(payload, accountKey);
 }
 
 async function resolveParentProduct(candidate: TinySearchCandidate) {

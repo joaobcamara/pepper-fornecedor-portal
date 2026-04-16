@@ -23,7 +23,7 @@ export const PEPPER_TINY_ACCOUNT_REFERENCES: PepperTinyAccountReferenceItem[] = 
     sortOrder: 10,
     active: true,
     sharesGroupStock: true,
-    readsAvailableMultiCompany: false,
+    readsAvailableMultiCompany: true,
     handlesCatalogImport: true,
     handlesPhysicalStock: true,
     zeroBalanceOnCount: false,
