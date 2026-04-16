@@ -198,6 +198,14 @@ async function resolveTinyProductIdForStockRefresh(input: {
   sku?: string | null;
   tinyProductId?: string | null;
 }) {
+  if (input.sku) {
+    const exactMatches = await searchTinyProductsBySku(input.sku, input.accountKey);
+    const exact = exactMatches.find((candidate) => candidate.sku === input.sku);
+    if (exact?.id) {
+      return exact.id;
+    }
+  }
+
   const directMapping = await prisma.catalogTinyMapping.findFirst({
     where: {
       accountKey: input.accountKey,
@@ -209,19 +217,11 @@ async function resolveTinyProductIdForStockRefresh(input: {
     }
   });
 
-  if (directMapping?.tinyId) {
+  if (directMapping?.tinyId && /^\d+$/.test(directMapping.tinyId)) {
     return directMapping.tinyId;
   }
 
-  if (input.sku) {
-    const exactMatches = await searchTinyProductsBySku(input.sku, input.accountKey);
-    const exact = exactMatches.find((candidate) => candidate.sku === input.sku);
-    if (exact?.id) {
-      return exact.id;
-    }
-  }
-
-  if (input.tinyProductId) {
+  if (input.tinyProductId && /^\d+$/.test(input.tinyProductId)) {
     return input.tinyProductId;
   }
 
