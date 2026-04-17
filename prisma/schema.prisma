@@ -240,11 +240,14 @@ model Supplier {
     id          String            @id @default(cuid())
     name        String
     slug        String            @unique
+    tinyContactId String?         @unique
     logoUrl     String?
     contactName String?
     contactPhone String?
     contactEmail String?
     address     String?
+    foundationMetadataJson String?
+    rawPayload  String?
     active      Boolean           @default(true)
     canViewProductValues     Boolean @default(false)
     canViewFinancialDashboard Boolean @default(false)
@@ -1004,6 +1007,8 @@ model CatalogProduct {
   salesContextAi    String?
   searchText        String?
   intentTags        String?
+  sourcePayloadJson String?
+  foundationMetadataJson String?
   tinyProductId     String?
   tinyCode          String?
   mainImageUrl      String?
@@ -1037,6 +1042,8 @@ model CatalogVariant {
   salesContextAi    String?
   searchText        String?
   intentTags        String?
+  sourcePayloadJson String?
+  foundationMetadataJson String?
   tinyProductId     String?
   tinyCode          String?
   active            Boolean             @default(true)
@@ -1064,6 +1071,9 @@ model CatalogInventory {
   inventorySyncStatus         InventorySyncStatus @default(STALE)
   lastStockSyncAt             DateTime?
   source                      String              @default("tiny")
+  sourceAccountKey            String?
+  lastReconciledTinyId        String?
+  rawPayload                  String?
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
   catalogVariant              CatalogVariant      @relation(fields: [catalogVariantId], references: [id])
@@ -1077,6 +1087,10 @@ model CatalogPrice {
   costPrice         Float?
   currency          String         @default("BRL")
   source            String         @default("internal")
+  sourceAccountKey  String?
+  priceListName     String?
+  externalPriceListId String?
+  rawPayload        String?
   syncedAt          DateTime?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -1089,10 +1103,17 @@ model CatalogImage {
   catalogVariantId  String?
   imageType         CatalogImageType @default(OTHER)
   url               String
+  bucket            String?
+  storagePath       String?
   altText           String?
+  checksumSha256    String?
+  width             Int?
+  height            Int?
   isPrimary         Boolean         @default(false)
   sortOrder         Int             @default(0)
   source            String          @default("internal")
+  sourceAccountKey  String?
+  rawPayload        String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   catalogProduct    CatalogProduct? @relation(fields: [catalogProductId], references: [id])
@@ -1100,6 +1121,7 @@ model CatalogImage {
 
   @@index([catalogProductId, sortOrder])
   @@index([catalogVariantId, sortOrder])
+  @@index([sourceAccountKey, imageType])
 }
 
 model CatalogMarketplaceListing {
@@ -1174,4 +1196,357 @@ model CatalogProductSupplier {
   supplier          Supplier       @relation(fields: [supplierId], references: [id])
 
   @@unique([catalogProductId, supplierId])
+}
+
+model FoundationInboundEvent {
+  id              String   @id @default(cuid())
+  integrationKey  String
+  provider        String
+  accountKey      String?
+  eventType       String
+  entityType      String?
+  entityId        String?
+  sku             String?
+  externalId      String?
+  fingerprint     String?
+  status          String   @default("received")
+  processingStage String?
+  occurredAt      DateTime?
+  receivedAt      DateTime @default(now())
+  processedAt     DateTime?
+  headersJson     String?
+  payloadJson     String
+  metadataJson    String?
+  errorMessage    String?
+  duplicateOfId   String?
+
+  @@index([integrationKey, receivedAt])
+  @@index([provider, accountKey, eventType, receivedAt])
+  @@index([entityType, entityId])
+  @@index([sku, receivedAt])
+  @@index([externalId])
+  @@index([fingerprint])
+}
+
+model FoundationAsset {
+  id              String   @id @default(cuid())
+  ownerDomain     String
+  ownerEntityType String?
+  ownerEntityId   String?
+  assetType       String
+  provider        String?
+  sourceAccountKey String?
+  bucket          String?
+  storagePath     String?
+  fileName        String?
+  extension       String?
+  mimeType        String?
+  sizeBytes       Int?
+  checksumSha256  String?
+  url             String
+  previewUrl      String?
+  originalUrl     String?
+  width           Int?
+  height          Int?
+  durationSeconds Int?
+  isPrimary       Boolean  @default(false)
+  sortOrder       Int      @default(0)
+  metadataJson    String?
+  rawPayload      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ownerDomain, ownerEntityType, ownerEntityId])
+  @@index([sourceAccountKey, assetType])
+}
+
+model CatalogVariantAccountState {
+  id                         String   @id @default(cuid())
+  catalogVariantId           String
+  accountKey                 String
+  sku                        String
+  skuParent                  String?
+  tinyProductId              String?
+  tinyParentId               String?
+  localPhysicalStock         Int?
+  localAvailableStock        Int?
+  reservedStock              Int?
+  availableMultiCompanyStock Int?
+  inventorySyncStatus        InventorySyncStatus @default(STALE)
+  lastStockSyncAt            DateTime?
+  source                     String   @default("tiny")
+  rawPayload                 String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@unique([catalogVariantId, accountKey])
+  @@index([accountKey, sku])
+}
+
+model FoundationStockMovement {
+  id                         String   @id @default(cuid())
+  accountKey                 String
+  catalogVariantId           String?
+  sourceProductId            String?
+  sku                        String
+  skuParent                  String?
+  movementType               String
+  movementDirection          String?
+  quantityDelta              Int?
+  resultingPhysicalStock     Int?
+  resultingAvailableStock    Int?
+  resultingReservedStock     Int?
+  resultingMultiCompanyStock Int?
+  sourceKind                 String
+  originReferenceType        String?
+  originReferenceId          String?
+  observation                String?
+  originatedBySystem         Boolean  @default(false)
+  occurredAt                 DateTime
+  rawPayload                 String?
+  createdAt                  DateTime @default(now())
+
+  @@index([accountKey, occurredAt])
+  @@index([sku, occurredAt])
+  @@index([originReferenceType, originReferenceId])
+}
+
+model FoundationContact {
+  id                    String   @id @default(cuid())
+  contactKind           String
+  accountKey            String?
+  tinyContactId         String?
+  externalContactCode   String?
+  displayName           String
+  legalName             String?
+  tradeName             String?
+  personType            String?
+  document              String?
+  stateRegistration     String?
+  email                 String?
+  phone                 String?
+  mobilePhone           String?
+  country               String?
+  state                 String?
+  city                  String?
+  district              String?
+  zipCode               String?
+  addressLine           String?
+  addressNumber         String?
+  addressComplement     String?
+  foundationMetadataJson String?
+  rawPayload            String?
+  active                Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([accountKey, tinyContactId])
+  @@index([contactKind, active])
+  @@index([document])
+  @@index([email])
+  @@index([displayName])
+}
+
+model FoundationPriceList {
+  id               String   @id @default(cuid())
+  accountKey       String?
+  source           String   @default("tiny")
+  externalListId   String?
+  name             String
+  currency         String   @default("BRL")
+  active           Boolean  @default(true)
+  foundationMetadataJson String?
+  rawPayload       String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([accountKey, externalListId])
+  @@index([active, accountKey])
+}
+
+model FoundationPriceListItem {
+  id                String   @id @default(cuid())
+  priceListId       String
+  catalogProductId  String?
+  catalogVariantId  String?
+  sku               String?
+  externalItemId    String?
+  salePrice         Float?
+  promotionalPrice  Float?
+  costPrice         Float?
+  minimumPrice      Float?
+  rawPayload        String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([priceListId, sku])
+  @@index([catalogProductId])
+  @@index([catalogVariantId])
+}
+
+model PickingSeparation {
+  id                    String   @id @default(cuid())
+  accountKey            String?
+  salesOrderId          String?
+  externalSeparationId  String
+  status                String
+  statusLabel           String?
+  startedAt             DateTime?
+  finishedAt            DateTime?
+  rawPayload            String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([accountKey, externalSeparationId])
+  @@index([salesOrderId])
+  @@index([status, updatedAt])
+}
+
+model PickingSeparationItem {
+  id                  String   @id @default(cuid())
+  pickingSeparationId String
+  catalogVariantId    String?
+  sku                 String?
+  productName         String?
+  quantityRequested   Int?
+  quantitySeparated   Int?
+  rawPayload          String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([pickingSeparationId])
+  @@index([catalogVariantId])
+  @@index([sku])
+}
+
+model PickingSeparationStatusHistory {
+  id                  String   @id @default(cuid())
+  pickingSeparationId String
+  fromStatus          String?
+  toStatus            String
+  note                String?
+  rawPayload          String?
+  createdAt           DateTime @default(now())
+
+  @@index([pickingSeparationId, createdAt])
+}
+
+model ShipmentGrouping {
+  id                  String   @id @default(cuid())
+  accountKey          String?
+  externalGroupingId  String
+  status              String?
+  labelPrintUrl       String?
+  groupingPrintUrl    String?
+  rawPayload          String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([accountKey, externalGroupingId])
+  @@index([status, updatedAt])
+}
+
+model Shipment {
+  id                  String   @id @default(cuid())
+  accountKey          String?
+  salesOrderId        String?
+  pickingSeparationId String?
+  groupingId          String?
+  externalShipmentId  String
+  shippingMethodName  String?
+  shippingMethodCode  String?
+  trackingNumber      String?
+  trackingUrl         String?
+  status              String
+  statusLabel         String?
+  dispatchedAt        DateTime?
+  deliveredAt         DateTime?
+  rawPayload          String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([accountKey, externalShipmentId])
+  @@index([salesOrderId])
+  @@index([pickingSeparationId])
+  @@index([groupingId])
+  @@index([status, updatedAt])
+}
+
+model ShipmentPackage {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  labelUrl    String?
+  packageCode String?
+  trackingNumber String?
+  rawPayload  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shipmentId])
+}
+
+model ShipmentStatusHistory {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  fromStatus  String?
+  toStatus    String
+  note        String?
+  rawPayload  String?
+  createdAt   DateTime @default(now())
+
+  @@index([shipmentId, createdAt])
+}
+
+model Invoice {
+  id                 String   @id @default(cuid())
+  accountKey         String?
+  salesOrderId       String?
+  externalInvoiceId  String
+  invoiceNumber      String?
+  series             String?
+  status             String
+  statusLabel        String?
+  issuedAt           DateTime?
+  authorizedAt       DateTime?
+  canceledAt         DateTime?
+  totalAmount        Float?
+  xmlUrl             String?
+  danfeUrl           String?
+  rawPayload         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([accountKey, externalInvoiceId])
+  @@index([salesOrderId])
+  @@index([status, updatedAt])
+}
+
+model InvoiceItem {
+  id              String   @id @default(cuid())
+  invoiceId       String
+  catalogVariantId String?
+  sku             String?
+  productName     String?
+  quantity        Int?
+  unitPrice       Float?
+  totalPrice      Float?
+  rawPayload      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([invoiceId])
+  @@index([catalogVariantId])
+  @@index([sku])
+}
+
+model InvoiceStatusHistory {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  fromStatus String?
+  toStatus   String
+  note       String?
+  rawPayload String?
+  createdAt  DateTime @default(now())
+
+  @@index([invoiceId, createdAt])
 }

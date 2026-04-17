@@ -15,6 +15,7 @@ Registrar:
 
 - `ATIVO`: implementado e alimentando a fundacao
 - `IMPLEMENTADO_SEM_DADOS`: existe no codigo, mas a tabela esta vazia
+- `ESTRUTURA_PADRONIZADA`: schema/documentacao preparados para receber o dominio, mesmo antes da ingestao real
 - `PLANEJADO`: existe na arquitetura/documentacao, mas nao no fluxo real
 
 ## 1. Catalogo e produto
@@ -160,13 +161,11 @@ Registrar:
 
 ### Tabelas previstas
 
-- `crm_stages`
-- `crm_subjects`
-- `crm_actions`
+- `FoundationContact`
 
 ### Status
 
-- arquitetura: `PLANEJADO`
+- arquitetura: `ESTRUTURA_PADRONIZADA`
 - codigo no portal atual: `PLANEJADO`
 - dados na fundacao atual: `PLANEJADO`
 
@@ -181,12 +180,12 @@ Registrar:
 ### Tabelas previstas
 
 - `CatalogPrice`
-- `CatalogPriceList`
-- `CatalogPriceListException`
+- `FoundationPriceList`
+- `FoundationPriceListItem`
 
 ### Status
 
-- arquitetura: `PLANEJADO`
+- arquitetura: `ESTRUTURA_PADRONIZADA`
 - codigo real do portal: `PLANEJADO`
 - dados na fundacao atual: `PLANEJADO`
 
@@ -202,8 +201,9 @@ Registrar:
 
 ### Tabelas previstas
 
-- `AccountsReceivable`
-- `AccountsReceivableSettlement`
+- `FoundationInboundEvent`
+- `Invoice`
+- `InvoiceStatusHistory`
 
 ### Status
 
@@ -226,11 +226,13 @@ Registrar:
 ### Tabelas previstas
 
 - `Invoice`
-- `InvoiceMarker`
+- `InvoiceItem`
+- `InvoiceStatusHistory`
+- `FoundationAsset`
 
 ### Status
 
-- arquitetura: `PLANEJADO`
+- arquitetura: `ESTRUTURA_PADRONIZADA`
 - codigo real do portal: `PLANEJADO`
 
 ## 9. Expedicao, separacao e rastreio
@@ -251,11 +253,15 @@ Registrar:
 - `Shipment`
 - `ShipmentGrouping`
 - `PickingSeparation`
-- `TrackingEvent`
+- `PickingSeparationItem`
+- `PickingSeparationStatusHistory`
+- `ShipmentPackage`
+- `ShipmentStatusHistory`
+- `FoundationAsset`
 
 ### Status
 
-- arquitetura: `PLANEJADO`
+- arquitetura: `ESTRUTURA_PADRONIZADA`
 - codigo real do portal: `PLANEJADO`
 
 ### Observacoes

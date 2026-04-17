@@ -11,6 +11,15 @@ Este documento existe para que qualquer sistema futuro consiga:
 - saber o que e oficial e o que e apenas compatibilidade
 - entender como usar SKU, Tiny ID e multiempresa
 
+## Documentos que devem ser lidos juntos
+
+Antes de conectar qualquer sistema novo, ler nesta ordem:
+
+1. `foundation-canonical-schema.md`
+2. `foundation-mental-map.md`
+3. `foundation-standardization-plan.md`
+4. este manual
+
 ## Regras obrigatorias para qualquer sistema novo
 
 ### 1. Nao criar um catalogo paralelo
@@ -245,6 +254,8 @@ Consumir:
 - `CatalogInventory`
 - `CatalogTinyMapping`
 - `CatalogProductSupplier`
+- `CatalogVariantAccountState`
+- `CatalogImage`
 
 ### Dominio `sales`
 
@@ -262,6 +273,20 @@ Consumir:
 - `PepperSizeReference`
 - `PepperColorReference`
 - `PepperTinyAccountReference`
+
+### Dominios canonicos novos
+
+Consumir quando o caso de uso pedir dado completo:
+
+- `FoundationInboundEvent`
+- `FoundationAsset`
+- `FoundationStockMovement`
+- `FoundationContact`
+- `FoundationPriceList`
+- `FoundationPriceListItem`
+- `PickingSeparation`
+- `Shipment`
+- `Invoice`
 
 ## Regras para escrita
 

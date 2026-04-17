@@ -12,6 +12,13 @@ Consolidar a fundacao Grupo Pepper para que:
 - Supabase vire a base central padronizada de leitura
 - Pepper IA passe a operar sobre dados reais e consistentes
 
+Documentos-base desta fase:
+
+- `foundation-canonical-schema.md`
+- `foundation-mental-map.md`
+- `foundation-rebuild-playbook.md`
+- `foundation-consumer-manual.md`
+
 ## Problema atual
 
 Hoje existe contaminacao entre:
@@ -128,6 +135,18 @@ Metricas oficiais:
 - tamanhos: `PepperSizeReference`
 - cores: `PepperColorReference`
 - contas Tiny: `PepperTinyAccountReference`
+
+### Dominios canonicos de expansao
+
+- eventos: `FoundationInboundEvent`
+- midia: `FoundationAsset`
+- estoque por conta: `CatalogVariantAccountState`
+- movimento: `FoundationStockMovement`
+- contatos: `FoundationContact`
+- listas de preco: `FoundationPriceList` e `FoundationPriceListItem`
+- separacao: `PickingSeparation*`
+- expedicao: `Shipment*`
+- fiscal: `Invoice*`
 
 ### Observabilidade
 
