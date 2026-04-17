@@ -841,14 +841,14 @@ async function validateFoundationStructure() {
     }>
   >(
     `select
-      to_regclass('"FoundationInboundEvent"') as "FoundationInboundEvent",
-      to_regclass('"FoundationAsset"') as "FoundationAsset",
-      to_regclass('"CatalogVariantAccountState"') as "CatalogVariantAccountState",
-      to_regclass('"FoundationStockMovement"') as "FoundationStockMovement",
-      to_regclass('"FoundationContact"') as "FoundationContact",
-      to_regclass('"PickingSeparation"') as "PickingSeparation",
-      to_regclass('"Shipment"') as "Shipment",
-      to_regclass('"Invoice"') as "Invoice"`
+      to_regclass('"FoundationInboundEvent"')::text as "FoundationInboundEvent",
+      to_regclass('"FoundationAsset"')::text as "FoundationAsset",
+      to_regclass('"CatalogVariantAccountState"')::text as "CatalogVariantAccountState",
+      to_regclass('"FoundationStockMovement"')::text as "FoundationStockMovement",
+      to_regclass('"FoundationContact"')::text as "FoundationContact",
+      to_regclass('"PickingSeparation"')::text as "PickingSeparation",
+      to_regclass('"Shipment"')::text as "Shipment",
+      to_regclass('"Invoice"')::text as "Invoice"`
   );
 
   return { sizeCount, colorCount, accountCount, tablePresence: tablePresence[0] };

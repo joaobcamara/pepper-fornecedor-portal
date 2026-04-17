@@ -18,6 +18,7 @@
     "smoke:http": "node scripts/http-smoke-runner.mjs",
     "foundation:live-check": "tsx scripts/foundation-live-check.ts",
     "foundation:apply": "tsx scripts/apply-foundation-structure.ts",
+    "foundation:reset:test-data": "tsx scripts/reset-foundation-test-data.ts",
     "foundation:references:sync": "tsx scripts/sync-pepper-references.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
