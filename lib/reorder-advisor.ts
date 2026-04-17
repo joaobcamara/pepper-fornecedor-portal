@@ -1,7 +1,12 @@
 import { safeCoverageDays } from "@/lib/sales-metrics";
 
 export type PurchaseSuggestionConfidence = "high" | "medium" | "low";
-export type PurchaseSuggestionBasis = "sales_30d" | "projected_7d" | "projected_1d" | "threshold_only";
+export type PurchaseSuggestionBasis =
+  | "dynamic_7_15_30"
+  | "sales_30d"
+  | "projected_7d"
+  | "projected_1d"
+  | "threshold_only";
 
 export type PurchaseSuggestionResult = {
   suggestedQuantity: number;
@@ -31,6 +36,7 @@ export function suggestPurchaseQuantity(params: {
   currentStock: number | null | undefined;
   sales1d?: number | null;
   sales7d?: number | null;
+  sales15d?: number | null;
   sales30d?: number | null;
   criticalStockThreshold?: number | null;
   lowStockThreshold?: number | null;
@@ -38,6 +44,7 @@ export function suggestPurchaseQuantity(params: {
   const currentStock = Math.max(0, params.currentStock ?? 0);
   const sales1d = Math.max(0, params.sales1d ?? 0);
   const sales7d = Math.max(0, params.sales7d ?? 0);
+  const sales15d = Math.max(0, params.sales15d ?? 0);
   const sales30d = Math.max(0, params.sales30d ?? 0);
   const critical = Math.max(0, params.criticalStockThreshold ?? 0);
   const low = Math.max(critical, params.lowStockThreshold ?? 0);
@@ -45,7 +52,22 @@ export function suggestPurchaseQuantity(params: {
   let basis: PurchaseSuggestionBasis = "threshold_only";
   let recentDemand = 0;
 
-  if (sales30d > 0) {
+  const sales7dDaily = sales7d > 0 ? sales7d / 7 : 0;
+  const sales15dDaily = sales15d > 0 ? sales15d / 15 : 0;
+  const sales30dDaily = sales30d > 0 ? sales30d / 30 : 0;
+
+  if (sales30d > 0 && sales15d > 0 && sales7d > 0) {
+    basis = "dynamic_7_15_30";
+
+    const weightedDailyDemand = sales7dDaily * 0.5 + sales15dDaily * 0.3 + sales30dDaily * 0.2;
+    const accelerating =
+      sales7dDaily >= sales15dDaily * 1.12 || sales15dDaily >= sales30dDaily * 1.08;
+    const decelerating =
+      sales7dDaily <= sales15dDaily * 0.88 && sales15dDaily <= sales30dDaily * 0.92;
+
+    const trendFactor = accelerating ? 1.12 : decelerating ? 0.92 : 1;
+    recentDemand = Math.ceil(weightedDailyDemand * 30 * trendFactor);
+  } else if (sales30d > 0) {
     basis = "sales_30d";
     recentDemand = sales30d;
   } else if (sales7d > 0) {
@@ -60,11 +82,19 @@ export function suggestPurchaseQuantity(params: {
   const targetStock = Math.max(recentDemand, minimumTarget);
   const suggestedQuantity = Math.max(0, Math.ceil(targetStock - currentStock));
   const confidence: PurchaseSuggestionConfidence =
-    basis === "sales_30d" ? (sales30d >= 8 ? "high" : "medium") : basis === "projected_7d" ? "medium" : "low";
+    basis === "dynamic_7_15_30"
+      ? "high"
+      : basis === "sales_30d"
+        ? (sales30d >= 8 ? "high" : "medium")
+        : basis === "projected_7d"
+          ? "medium"
+          : "low";
   const confidenceLabel =
     confidence === "high" ? "Alta confianca" : confidence === "medium" ? "Confianca moderada" : "Confianca conservadora";
   const basisLabel =
-    basis === "sales_30d"
+    basis === "dynamic_7_15_30"
+      ? "Leitura dinamica de 7, 15 e 30 dias"
+      : basis === "sales_30d"
       ? "Vendas reais dos ultimos 30 dias"
       : basis === "projected_7d"
         ? "Projecao dos ultimos 7 dias"
@@ -74,6 +104,8 @@ export function suggestPurchaseQuantity(params: {
   const explanation =
     basis === "threshold_only"
       ? "A fundacao ainda nao tem vendas suficientes para este SKU; a sugestao usou estoque critico e cobertura minima."
+      : basis === "dynamic_7_15_30"
+        ? "A sugestao percebeu a aceleracao ou desaceleracao do giro combinando os ritmos de 7, 15 e 30 dias."
       : basis === "projected_1d"
         ? "A fundacao ainda tem base curta para este SKU; a sugestao extrapolou o giro mais recente com margem conservadora."
         : basis === "projected_7d"

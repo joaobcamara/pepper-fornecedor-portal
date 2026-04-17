@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Building2,
@@ -172,14 +172,14 @@ function resolveSupplierPageKey(pathname: string | null): PepperIaBubblePageKey 
 export function PepperIaBubble({
   role,
   messages,
-  prompts,
+  prompts: _prompts,
   pageKey,
   pageHint,
   alertCount = 0
 }: {
   role: "ADMIN" | "SUPPLIER";
   messages: PepperIaMessage[];
-  prompts: string[];
+  prompts?: string[];
   pageKey?: PepperIaBubblePageKey;
   pageHint?: string | null;
   alertCount?: number;
@@ -273,6 +273,13 @@ export function PepperIaBubble({
     void sendMessage(new FormData(event.currentTarget));
   }
 
+  function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      formRef.current?.requestSubmit();
+    }
+  }
+
   return (
       <>
       <div className="fixed right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-50 flex flex-col items-end gap-3 lg:bottom-5 lg:right-5 lg:top-auto">
@@ -331,23 +338,6 @@ export function PepperIaBubble({
                 </div>
               </div>
 
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-                {prompts.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => {
-                      if (textareaRef.current) {
-                        textareaRef.current.value = prompt;
-                        textareaRef.current.focus();
-                      }
-                    }}
-                    className="rounded-full border border-[#f2c6b0] bg-white px-3 py-2 text-[11px] font-semibold text-[#a64c24]"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
             </header>
 
             <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/80 px-4 py-4">
@@ -372,10 +362,10 @@ export function PepperIaBubble({
                   </article>
                 ))
               ) : (
-                <div className="flex h-full items-center justify-center rounded-[1.6rem] border border-dashed border-slate-200 bg-white px-4 text-center text-sm text-slate-500">
+                <div className="flex h-full min-h-[12rem] items-center justify-center rounded-[1.6rem] border border-dashed border-slate-200 bg-white px-4 text-center text-sm text-slate-500">
                   <div>
                     <MessageSquareText className="mx-auto mb-3 h-5 w-5 text-slate-400" />
-                    Nenhuma conversa ainda. Fale com a Pepper IA por aqui.
+                    Comece com uma pergunta curta. A Pepper IA responde usando o contexto desta tela.
                   </div>
                 </div>
               )}
@@ -385,7 +375,8 @@ export function PepperIaBubble({
               <textarea
                 ref={textareaRef}
                 name="message"
-                className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none"
+                onKeyDown={handleTextareaKeyDown}
+                className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none"
                 placeholder={
                   role === "ADMIN"
                     ? "Ex.: quais produtos precisam de reposicao urgente hoje?"

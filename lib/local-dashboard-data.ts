@@ -141,6 +141,7 @@ export async function getLocalAdminDashboardData(): Promise<AdminDashboardData> 
         quantity: variant.currentStock ?? null,
         band: getStockBand(variant.currentStock ?? null, DEFAULT_THRESHOLDS),
         sales: variant.sales ?? emptySales(),
+        sales15d: Math.max(variant.sales?.["7d"] ?? 0, Math.round((variant.sales?.["1m"] ?? 0) / 2)),
         unitCost: variant.unitCost ?? null,
         criticalStockThreshold: null,
         lowStockThreshold: null,

@@ -37,6 +37,7 @@ type VariantRow = {
   quantity: number | null;
   band: "critical" | "low" | "ok" | "unknown";
   sales: SalesPeriodTotals;
+  sales15d: number;
   unitCost: number | null;
   criticalStockThreshold: number | null;
   lowStockThreshold: number | null;
@@ -137,6 +138,10 @@ function formatCurrency(value: number) {
   return `R$ ${value.toFixed(2).replace(".", ",")}`;
 }
 
+function isBrandFallbackImage(imageUrl?: string | null) {
+  return !imageUrl || imageUrl === "/brand/pepper-logo.png";
+}
+
 function bandTone(band: ProductGroup["band"]) {
   if (band === "critical") return "border-rose-200 bg-rose-50/80";
   if (band === "low") return "border-amber-200 bg-amber-50/80";
@@ -149,6 +154,85 @@ function bandBadgeTone(band: ProductGroup["band"] | VariantRow["band"]) {
   if (band === "low") return "bg-amber-100 text-amber-700";
   if (band === "ok") return "bg-emerald-100 text-emerald-700";
   return "bg-slate-100 text-slate-600";
+}
+
+function describeSalesRhythm(params: { sales7d: number; sales15d: number; sales30d: number }) {
+  const pace7d = params.sales7d / 7;
+  const pace15d = params.sales15d / 15;
+  const pace30d = params.sales30d / 30;
+
+  if (params.sales30d <= 0 && params.sales15d <= 0 && params.sales7d <= 0) {
+    return {
+      title: "Base curta de giro",
+      description: "A Pepper IA vai cair no modo conservador porque ainda nao ha historico suficiente nesta familia.",
+      tone: "border-slate-200 bg-slate-50 text-slate-700"
+    };
+  }
+
+  if (pace7d >= pace15d * 1.12 || pace15d >= pace30d * 1.08) {
+    return {
+      title: "Acelerando",
+      description: "O giro recente esta acima do ritmo medio. A Pepper IA vai dar mais peso para os ultimos 7 e 15 dias.",
+      tone: "border-emerald-200 bg-emerald-50 text-emerald-700"
+    };
+  }
+
+  if (pace7d <= pace15d * 0.88 && pace15d <= pace30d * 0.92) {
+    return {
+      title: "Desacelerando",
+      description: "O giro perdeu forca no curto prazo. A Pepper IA vai reduzir a agressividade da sugestao para evitar excesso.",
+      tone: "border-amber-200 bg-amber-50 text-amber-800"
+    };
+  }
+
+  return {
+    title: "Ritmo estavel",
+    description: "Os ultimos 7, 15 e 30 dias estao coerentes. A Pepper IA pode sugerir reposicao com leitura equilibrada.",
+    tone: "border-slate-200 bg-slate-50 text-slate-700"
+  };
+}
+
+function ProductReferenceThumbnail({
+  imageUrl,
+  alt,
+  sku,
+  size = "card"
+}: {
+  imageUrl: string;
+  alt: string;
+  sku: string;
+  size?: "card" | "hero";
+}) {
+  const fallback = isBrandFallbackImage(imageUrl);
+  const dimensionClassName = size === "hero" ? "h-24 w-24 rounded-[1.75rem]" : "h-20 w-20 rounded-[1.5rem]";
+
+  return (
+    <div
+      className={cn(
+        "relative shrink-0 overflow-hidden border shadow-inner",
+        dimensionClassName,
+        fallback ? "border-[#f3d5c3] bg-[#fff7f1]" : "border-white/80 bg-white"
+      )}
+    >
+      <Image
+        src={imageUrl}
+        alt={alt}
+        fill
+        sizes={size === "hero" ? "96px" : "80px"}
+        className={cn(fallback ? "object-contain p-3" : "object-cover")}
+      />
+      <div className="absolute inset-x-2 bottom-2">
+        <span
+          className={cn(
+            "inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
+            fallback ? "bg-white/92 text-[#b25a31]" : "bg-slate-950/72 text-white"
+          )}
+        >
+          {fallback ? `Ref. ${sku}` : "Foto de referencia"}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 const PRODUCT_ORDER_FLASH_KEY = "admin-product-inventory:flash";
@@ -240,6 +324,28 @@ export function AdminProductInventoryManager({
 
   const selectedDraft = selectedGroup ? drafts[selectedGroup.parentSku] : null;
 
+  const selectedSales15d = useMemo(
+    () => (selectedGroup ? selectedGroup.variants.reduce((sum, variant) => sum + variant.sales15d, 0) : 0),
+    [selectedGroup]
+  );
+
+  const selectedReadableVariantCount = useMemo(
+    () => (selectedGroup ? selectedGroup.variants.filter((variant) => variant.quantity !== null).length : 0),
+    [selectedGroup]
+  );
+
+  const selectedSalesRhythm = useMemo(
+    () =>
+      selectedGroup
+        ? describeSalesRhythm({
+            sales7d: selectedGroup.sales["7d"],
+            sales15d: selectedSales15d,
+            sales30d: selectedGroup.sales["1m"]
+          })
+        : null,
+    [selectedGroup, selectedSales15d]
+  );
+
   const sizes = useMemo(
     () => (selectedGroup ? Array.from(new Set(selectedGroup.variants.map((variant) => variant.sizeLabel))) : []),
     [selectedGroup]
@@ -293,6 +399,7 @@ export function AdminProductInventoryManager({
         currentStock: variant.quantity,
         sales1d: variant.sales["1d"],
         sales7d: variant.sales["7d"],
+        sales15d: variant.sales15d,
         sales30d: variant.sales["1m"],
         criticalStockThreshold:
           toNullableNumber(selectedDraft?.variants[variant.sku]?.criticalStockThreshold ?? "") ??
@@ -412,6 +519,7 @@ export function AdminProductInventoryManager({
           currentStock: variant.quantity,
           sales1d: variant.sales["1d"],
           sales7d: variant.sales["7d"],
+          sales15d: variant.sales15d,
           sales30d: variant.sales["1m"],
           criticalStockThreshold:
             toNullableNumber(selectedDraft?.variants[variant.sku]?.criticalStockThreshold ?? "") ??
@@ -765,17 +873,19 @@ export function AdminProductInventoryManager({
               )}
             >
               <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{group.parentSku}</p>
                   <h3 className="mt-2 text-xl font-semibold text-slate-900">{group.internalName}</h3>
                   <p className="mt-1 text-sm text-slate-500">
                     {group.variantCount} variacoes • estoque total {group.totalStock}
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
+                    <span className="rounded-full bg-white/80 px-3 py-1">Atualizado {group.updatedAt}</span>
+                    <span className="rounded-full bg-white/80 px-3 py-1">{group.suppliers.length} fornecedores ligados</span>
+                  </div>
                 </div>
 
-                <div className="relative h-16 w-16 overflow-hidden rounded-3xl border border-white/80 bg-white shadow-inner">
-                  <Image src={group.imageUrl} alt={group.internalName} fill className="object-contain p-2" />
-                </div>
+                <ProductReferenceThumbnail imageUrl={group.imageUrl} alt={group.internalName} sku={group.parentSku} />
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
@@ -840,18 +950,26 @@ export function AdminProductInventoryManager({
 
       {selectedGroup && selectedDraft ? (
         <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
-          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-7xl sm:rounded-[2rem] sm:p-6">
+          <div className="max-h-[100vh] w-full overflow-y-auto rounded-none border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[94vh] sm:max-w-[min(97vw,112rem)] sm:rounded-[2rem] sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex min-w-0 flex-1 items-start gap-4">
-                <div className="relative h-20 w-20 overflow-hidden rounded-3xl border border-white bg-white shadow-inner">
-                  <Image src={selectedGroup.imageUrl} alt={selectedGroup.internalName} fill className="object-contain p-2" />
-                </div>
+                <ProductReferenceThumbnail
+                  imageUrl={selectedGroup.imageUrl}
+                  alt={selectedGroup.internalName}
+                  sku={selectedGroup.parentSku}
+                  size="hero"
+                />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Gestor de produto e estoque</p>
                   <h3 className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">{selectedGroup.internalName}</h3>
                   <p className="mt-1 text-sm text-slate-500">
                     {selectedGroup.parentSku} • {selectedGroup.variantCount} variacoes • {selectedGroup.bandLabel}
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
+                    <span className="rounded-full bg-slate-100 px-3 py-1">{selectedReadableVariantCount}/{selectedGroup.variantCount} com leitura</span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1">{selectedGroup.staleCount} desatualizadas</span>
+                    <span className="rounded-full bg-slate-100 px-3 py-1">Atualizado {selectedGroup.updatedAt}</span>
+                  </div>
                 </div>
               </div>
 
@@ -864,8 +982,10 @@ export function AdminProductInventoryManager({
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
+            <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-6">
               <InfoMetric label="Estoque total" value={String(selectedGroup.totalStock)} tone="bg-slate-50 text-slate-700" />
+              <InfoMetric label="Vendas 7D" value={String(selectedGroup.sales["7d"])} tone="bg-slate-50 text-slate-700" />
+              <InfoMetric label="Vendas 15D" value={String(selectedSales15d)} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Vendas 30D" value={String(selectedGroup.sales["1m"])} tone="bg-slate-50 text-slate-700" />
               <InfoMetric
                 label="Cobertura"
@@ -874,6 +994,19 @@ export function AdminProductInventoryManager({
               />
               <InfoMetric label="Pedidos ligados" value={String(selectedGroup.relatedOrderCount)} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Saude" value={selectedGroup.bandLabel} tone={bandBadgeTone(selectedGroup.band)} />
+            </div>
+
+            <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,0.7fr))]">
+              {selectedSalesRhythm ? (
+                <div className={cn("rounded-[1.5rem] border px-4 py-4 text-sm", selectedSalesRhythm.tone)}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">Pepper IA</p>
+                  <p className="mt-2 text-lg font-semibold">{selectedSalesRhythm.title}</p>
+                  <p className="mt-2 leading-6">{selectedSalesRhythm.description}</p>
+                </div>
+              ) : null}
+              <InfoBox label="Cor lider" value={selectedGroup.topColorLabel ?? "Sem base"} />
+              <InfoBox label="Tamanho lider" value={selectedGroup.topSizeLabel ?? "Sem base"} />
+              <InfoBox label="Movimento" value={selectedGroup.movementBadge} />
             </div>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -894,7 +1027,7 @@ export function AdminProductInventoryManager({
               ))}
             </div>
 
-            <div className="mt-5 grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
+            <div className="mt-5 grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
               <div className="space-y-5">
                 <section className="rounded-[1.7rem] border border-slate-200 bg-slate-50/80 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1002,7 +1135,7 @@ export function AdminProductInventoryManager({
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-900">Pedido direto do produto</p>
                       <p className="mt-1 text-sm text-slate-500">
-                        Monte a compra a partir da grade e use a Pepper IA para preencher com base nas vendas dos ultimos 30 dias.
+                        Monte a compra a partir da grade e use a Pepper IA para equilibrar o ritmo de 7, 15 e 30 dias.
                       </p>
                     </div>
                     <button
@@ -1136,7 +1269,7 @@ export function AdminProductInventoryManager({
                   </span>
                 </div>
 
-                <div className="mt-5 space-y-4 sm:hidden">
+                <div className="mt-5 space-y-4 xl:hidden">
                   {matrix.map((row) => (
                     <div key={`${row.color}-mobile`} className="rounded-[1.4rem] border border-[#f4d7c7] bg-white p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -1223,11 +1356,11 @@ export function AdminProductInventoryManager({
                   ))}
                 </div>
 
-                <div className="mt-5 hidden overflow-x-auto sm:block">
-                  <div className="min-w-[64rem] overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
+                <div className="mt-5 hidden xl:block">
+                  <div className="overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
                     <div
                       className="grid bg-[#fff3ec] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
-                      style={{ gridTemplateColumns: `1.05fr repeat(${sizes.length}, minmax(220px, 1fr))` }}
+                      style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
                     >
                       <div className="px-4 py-3">Cor</div>
                       {sizes.map((size) => (
@@ -1241,7 +1374,7 @@ export function AdminProductInventoryManager({
                       <div
                         key={row.color}
                         className="grid border-t border-[#f8e4d9] bg-white"
-                        style={{ gridTemplateColumns: `1.05fr repeat(${sizes.length}, minmax(220px, 1fr))` }}
+                        style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
                       >
                         <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
                         {row.items.map((item, index) => {

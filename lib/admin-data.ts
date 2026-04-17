@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import {
   buildSalesPeriodTotals,
+  getUnitsSoldInLastDays,
   getDateWindows,
   getMovementBadge,
   safeCoverageDays,
@@ -84,19 +85,20 @@ export type AdminDashboardData = {
       supplierName: string;
       originLabel: string;
     } | null;
-    variants: Array<{
-      id: string;
-      sku: string;
+      variants: Array<{
+        id: string;
+        sku: string;
       sizeCode: string | null;
       sizeLabel: string;
       colorCode: string | null;
       colorLabel: string;
-      quantity: number | null;
-      band: StockBand;
-      sales: SalesPeriodTotals;
-      unitCost: number | null;
-      criticalStockThreshold: number | null;
-      lowStockThreshold: number | null;
+        quantity: number | null;
+        band: StockBand;
+        sales: SalesPeriodTotals;
+        sales15d: number;
+        unitCost: number | null;
+        criticalStockThreshold: number | null;
+        lowStockThreshold: number | null;
       effectiveCriticalStockThreshold: number;
       effectiveLowStockThreshold: number;
     }>;
@@ -381,7 +383,9 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
     const sizeSales = new Map<string, number>();
 
     const variants = product.variants.map((variant) => {
-      const sales = buildSalesPeriodTotals(variantMetricMap.get(variant.id) ?? []);
+      const variantMetricsForPeriod = variantMetricMap.get(variant.id) ?? [];
+      const sales = buildSalesPeriodTotals(variantMetricsForPeriod);
+      const sales15d = getUnitsSoldInLastDays(variantMetricsForPeriod, 15);
       const thresholds = resolveStockThresholds({
         productCritical: variant.criticalStockThreshold,
         productLow: variant.lowStockThreshold,
@@ -406,6 +410,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         quantity: variant.quantity,
         band,
         sales,
+        sales15d,
         unitCost: variant.costPrice,
         criticalStockThreshold: variant.criticalStockThreshold,
         lowStockThreshold: variant.lowStockThreshold,

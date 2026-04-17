@@ -62,6 +62,21 @@ export function buildSalesPeriodTotals<T extends { date: Date; unitsSold: number
   };
 }
 
+export function getUnitsSoldInLastDays<T extends { date: Date; unitsSold: number }>(
+  metrics: T[],
+  days: number,
+  now = new Date()
+) {
+  if (days <= 0) {
+    return 0;
+  }
+
+  const today = startOfDay(now);
+  const start = addDays(today, -(days - 1));
+
+  return Number(sumNumbers(metrics.filter((metric) => metric.date >= start).map((metric) => metric.unitsSold)));
+}
+
 export function sumNumbers(values: Array<number | null | undefined>): number {
   return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 }

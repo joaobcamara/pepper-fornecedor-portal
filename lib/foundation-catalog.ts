@@ -77,25 +77,41 @@ export type FoundationCatalogProductRecord = {
 type SourceProductRecord = {
   id: string;
   parentId: string | null;
+  imageUrl: string | null;
   criticalStockThreshold: number | null;
   lowStockThreshold: number | null;
   syncStatus: InventorySyncStatus;
   lastSyncedAt: Date | null;
 };
 
+const PORTAL_BRAND_FALLBACK_IMAGE = "/brand/pepper-logo.png";
+
+function pickPreferredImageUrl(candidates: Array<string | null | undefined>) {
+  const normalized = candidates
+    .map((candidate) => candidate?.trim() ?? null)
+    .filter((candidate): candidate is string => Boolean(candidate));
+
+  return (
+    normalized.find((candidate) => candidate !== PORTAL_BRAND_FALLBACK_IMAGE) ??
+    normalized[0] ??
+    null
+  );
+}
+
 function getCatalogImageUrl(params: {
   mainImageUrl?: string | null;
+  sourceImageUrl?: string | null;
   productImages?: Array<{ url: string; isPrimary: boolean }>;
   variantImages?: Array<{ url: string; isPrimary: boolean }>;
 }) {
-  return (
-    params.mainImageUrl ??
-    params.variantImages?.find((image) => image.isPrimary)?.url ??
-    params.variantImages?.[0]?.url ??
-    params.productImages?.find((image) => image.isPrimary)?.url ??
-    params.productImages?.[0]?.url ??
-    null
-  );
+  return pickPreferredImageUrl([
+    params.mainImageUrl,
+    params.sourceImageUrl,
+    params.variantImages?.find((image) => image.isPrimary)?.url,
+    params.variantImages?.[0]?.url,
+    params.productImages?.find((image) => image.isPrimary)?.url,
+    params.productImages?.[0]?.url
+  ]);
 }
 
 function getLatestDate(values: Array<Date | null | undefined>) {
@@ -192,6 +208,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         select: {
           id: true,
           parentId: true,
+          imageUrl: true,
           criticalStockThreshold: true,
           lowStockThreshold: true,
           syncStatus: true,
@@ -206,6 +223,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       {
         id: product.id,
         parentId: product.parentId,
+        imageUrl: product.imageUrl,
         criticalStockThreshold: product.criticalStockThreshold,
         lowStockThreshold: product.lowStockThreshold,
         syncStatus: product.syncStatus,
@@ -253,6 +271,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         promotionalPrice: variant.price?.promotionalPrice ?? null,
         costPrice: variant.price?.costPrice ?? null,
         imageUrl: getCatalogImageUrl({
+          sourceImageUrl: sourceProduct?.imageUrl ?? parentSource?.imageUrl ?? null,
           variantImages: variant.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
           productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
           mainImageUrl: catalogProduct.mainImageUrl
@@ -285,6 +304,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       parentSku: catalogProduct.skuParent,
       internalName: catalogProduct.name,
       imageUrl: getCatalogImageUrl({
+        sourceImageUrl: parentSource?.imageUrl ?? null,
         mainImageUrl: catalogProduct.mainImageUrl,
         productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary }))
       }),
