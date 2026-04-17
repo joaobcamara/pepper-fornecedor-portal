@@ -6,12 +6,15 @@ import {
   AlertTriangle,
   CheckCircle2,
   DatabaseZap,
+  Download,
   LoaderCircle,
+  MessageCircle,
   PackagePlus,
   Search,
   Sparkles,
   X
 } from "lucide-react";
+import { downloadHtmlFile, openWhatsAppShare } from "@/lib/browser-share";
 import { AdminImportConsole } from "@/components/admin-import-console";
 import { ProductOperationalStrip } from "@/components/product-operational-strip";
 import { cn } from "@/lib/cn";
@@ -490,6 +493,138 @@ export function AdminProductInventoryManager({
     }
   }
 
+  function buildOrderSharePayload() {
+    if (!selectedGroup) {
+      return null;
+    }
+
+    const selectedSupplierName =
+      selectableSuppliers.find((supplier) => supplier.id === orderSupplierId)?.name ??
+      selectedGroup.suppliers[0]?.name ??
+      "Fornecedor";
+
+    const variants = selectedGroup.variants
+      .map((variant) => ({
+        sku: variant.sku,
+        size: variant.sizeLabel,
+        color: variant.colorLabel,
+        currentStock: variant.quantity,
+        requestedQuantity: Number(orderQuantities[variant.sku] ?? 0)
+      }))
+      .filter((variant) => variant.requestedQuantity > 0);
+
+    if (variants.length === 0) {
+      return null;
+    }
+
+    return {
+      supplierId: orderSupplierId || null,
+      supplierName: selectedSupplierName,
+      productName: selectedDraft?.internalName ?? selectedGroup.internalName,
+      productSku: selectedGroup.parentSku,
+      imageUrl: selectedGroup.imageUrl,
+      note: orderNote.trim(),
+      variants
+    };
+  }
+
+  async function requestOrderShareFile(): Promise<{ fileName: string; html: string } | null> {
+    const payload = buildOrderSharePayload();
+
+    if (!payload) {
+      setOrderError("Informe pelo menos uma quantidade para gerar o arquivo do pedido.");
+      return null;
+    }
+
+    const response = await fetch("/api/admin/purchase-order/html", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const body = (await response.json()) as { error?: string; fileName?: string; html?: string };
+
+    if (!response.ok || !body.fileName || !body.html) {
+      throw new Error(body.error ?? "Nao foi possivel gerar o arquivo do pedido.");
+    }
+
+    return {
+      fileName: body.fileName,
+      html: body.html
+    };
+  }
+
+  async function requestOrderWhatsAppLink(): Promise<{ shareUrl: string; text: string } | null> {
+    const payload = buildOrderSharePayload();
+
+    if (!payload) {
+      setOrderError("Informe pelo menos uma quantidade para compartilhar o pedido.");
+      return null;
+    }
+
+    const response = await fetch("/api/whatsapp-links", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        supplierId: payload.supplierId,
+        productSku: payload.productSku,
+        productName: payload.productName,
+        imageUrl: payload.imageUrl,
+        note: payload.note,
+        items: payload.variants
+      })
+    });
+
+    const body = (await response.json()) as { error?: string; shareUrl?: string; text?: string };
+
+    if (!response.ok || !body.shareUrl || !body.text) {
+      throw new Error(body.error ?? "Nao foi possivel gerar o link do WhatsApp.");
+    }
+
+    return {
+      shareUrl: body.shareUrl,
+      text: body.text
+    };
+  }
+
+  async function downloadOrderDraft() {
+    setOrderError(null);
+
+    try {
+      const file = await requestOrderShareFile();
+      if (!file) {
+        return;
+      }
+
+      downloadHtmlFile(file.fileName, file.html);
+      setOrderFeedbackTone("success");
+      setOrderFeedback("Arquivo do pedido gerado para download.");
+    } catch (requestError) {
+      setOrderError(requestError instanceof Error ? requestError.message : "Nao foi possivel gerar o arquivo do pedido.");
+    }
+  }
+
+  async function shareOrderDraftOnWhatsApp() {
+    setOrderError(null);
+
+    try {
+      const link = await requestOrderWhatsAppLink();
+      if (!link) {
+        return;
+      }
+
+      openWhatsAppShare(link.text);
+      setOrderFeedbackTone("success");
+      setOrderFeedback("Link do WhatsApp criado e pronto para envio.");
+    } catch (requestError) {
+      setOrderError(requestError instanceof Error ? requestError.message : "Nao foi possivel gerar o link do WhatsApp.");
+    }
+  }
+
   return (
     <section className="space-y-6">
       <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
@@ -512,7 +647,7 @@ export function AdminProductInventoryManager({
               )}
             >
               {tinyConfigured ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-              {tinyConfigured ? "Tiny pronto para importar" : "Tiny ainda nao configurado"}
+              {tinyConfigured ? "Cadastro sob demanda pelo Tiny" : "Tiny ainda nao configurado"}
             </div>
 
             <button
@@ -521,7 +656,7 @@ export function AdminProductInventoryManager({
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40"
             >
               <DatabaseZap className="h-4 w-4" />
-              Importacao Tiny
+                Buscar ou importar SKU
             </button>
           </div>
         </div>
@@ -756,8 +891,8 @@ export function AdminProductInventoryManager({
                 <section className="rounded-[1.7rem] border border-slate-200 bg-slate-50/80 p-5">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">Configuracao do produto</p>
-                      <p className="mt-1 text-sm text-slate-500">Nome interno, fornecedores e limites padrao.</p>
+                        <p className="text-sm font-semibold text-slate-900">Configuracao do card no portal</p>
+                        <p className="mt-1 text-sm text-slate-500">Catalogo canonico da fundacao, com visibilidade do card, fornecedores e limites operacionais.</p>
                     </div>
                     <button
                       type="button"
@@ -772,13 +907,15 @@ export function AdminProductInventoryManager({
 
                   <div className="mt-4 grid gap-4">
                     <label className="block">
-                      <span className="mb-2 block text-sm font-semibold text-slate-700">Nome interno</span>
-                      <input
-                        value={selectedDraft.internalName}
-                        onChange={(event) => updateDraft(selectedGroup.parentSku, { internalName: event.target.value })}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
-                      />
-                    </label>
+                        <span className="mb-2 block text-sm font-semibold text-slate-700">Nome vindo da fundacao</span>
+                        <input
+                          value={selectedDraft.internalName}
+                          readOnly
+                          disabled
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 outline-none"
+                        />
+                        <span className="mt-2 block text-xs text-slate-500">A edicao estrutural do produto acontece em outro sistema. Aqui o portal apenas consome o catalogo canonico.</span>
+                      </label>
 
                     <div className="grid gap-4 md:grid-cols-2">
                       <label className="block">
@@ -805,8 +942,8 @@ export function AdminProductInventoryManager({
 
                     <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">Produto ativo</p>
-                        <p className="text-xs text-slate-500">Quando inativo, o grupo sai da operacao do fornecedor.</p>
+                          <p className="text-sm font-semibold text-slate-900">Card visivel no portal</p>
+                          <p className="text-xs text-slate-500">Quando oculto, o card sai do portal do fornecedor sem apagar o produto canonico da fundacao.</p>
                       </div>
                       <button
                         type="button"
@@ -816,7 +953,7 @@ export function AdminProductInventoryManager({
                           selectedDraft.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
                         )}
                       >
-                        {selectedDraft.active ? "Ativo" : "Inativo"}
+                          {selectedDraft.active ? "Visivel" : "Oculto"}
                       </button>
                     </div>
 
@@ -953,6 +1090,25 @@ export function AdminProductInventoryManager({
                       >
                         {creatingOrder ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
                         {creatingOrder ? "Criando..." : "Criar pedido"}
+                      </button>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => void shareOrderDraftOnWhatsApp()}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                        WhatsApp
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void downloadOrderDraft()}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                      >
+                        <Download className="h-4 w-4" />
+                        Baixar arquivo
                       </button>
                     </div>
                   </div>

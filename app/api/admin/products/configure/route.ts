@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { writePortalCatalogViewState } from "@/lib/foundation-portal-catalog-state";
 import { updateLocalProductConfiguration } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
@@ -145,18 +146,11 @@ export async function POST(request: Request) {
           id: catalogProduct.id
         },
         data: {
-          name: body.data.internalName,
-          active: body.data.active,
-          archivedAt: body.data.active ? null : catalogProduct.archivedAt ?? new Date()
-        }
-      });
-
-      await tx.catalogVariant.updateMany({
-        where: {
-          catalogProductId: catalogProduct.id
-        },
-        data: {
-          active: body.data.active
+          foundationMetadataJson: writePortalCatalogViewState({
+            currentFoundationMetadataJson: catalogProduct.foundationMetadataJson,
+            visible: body.data.active,
+            hiddenReason: body.data.active ? null : "hidden_in_supplier_portal"
+          })
         }
       });
 
@@ -205,9 +199,6 @@ export async function POST(request: Request) {
           id: parent.id
         },
         data: {
-          internalName: body.data.internalName,
-          active: body.data.active,
-          archivedAt: body.data.active ? null : parent.archivedAt ?? new Date(),
           criticalStockThreshold: body.data.criticalStockThreshold,
           lowStockThreshold: body.data.lowStockThreshold
         }
@@ -229,8 +220,6 @@ export async function POST(request: Request) {
           id: variant.sourceProductId
         },
         data: {
-          active: body.data.active,
-          archivedAt: body.data.active ? null : new Date(),
           criticalStockThreshold: thresholdDraft?.criticalStockThreshold ?? null,
           lowStockThreshold: thresholdDraft?.lowStockThreshold ?? null
         }
@@ -249,8 +238,6 @@ export async function POST(request: Request) {
           id: variant.id
         },
         data: {
-          active: body.data.active,
-          archivedAt: body.data.active ? null : variant.archivedAt ?? new Date(),
           criticalStockThreshold: thresholdDraft?.criticalStockThreshold ?? null,
           lowStockThreshold: thresholdDraft?.lowStockThreshold ?? null
         }
@@ -264,7 +251,12 @@ export async function POST(request: Request) {
         entityType: "catalog_product",
         entityId: catalogProduct?.id ?? parent?.id ?? body.data.parentSku,
         metadata: JSON.stringify({
-          ...body.data,
+          parentSku: body.data.parentSku,
+          portalVisible: body.data.active,
+          internalName: body.data.internalName,
+          criticalStockThreshold: body.data.criticalStockThreshold,
+          lowStockThreshold: body.data.lowStockThreshold,
+          variantThresholds: body.data.variantThresholds,
           supplierIds: validSupplierIds
         })
       }

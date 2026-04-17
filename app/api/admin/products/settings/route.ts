@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { writePortalCatalogViewState } from "@/lib/foundation-portal-catalog-state";
 import { prisma } from "@/lib/prisma";
 import { getCurrentSession } from "@/lib/session";
 
@@ -102,18 +103,11 @@ export async function POST(request: Request) {
           id: catalogProduct.id
         },
         data: {
-          name: body.data.internalName,
-          active: body.data.active,
-          archivedAt: body.data.active ? null : catalogProduct.archivedAt ?? new Date()
-        }
-      });
-
-      await tx.catalogVariant.updateMany({
-        where: {
-          catalogProductId: catalogProduct.id
-        },
-        data: {
-          active: body.data.active
+          foundationMetadataJson: writePortalCatalogViewState({
+            currentFoundationMetadataJson: catalogProduct.foundationMetadataJson,
+            visible: body.data.active,
+            hiddenReason: body.data.active ? null : "hidden_in_supplier_portal"
+          })
         }
       });
 
@@ -156,47 +150,6 @@ export async function POST(request: Request) {
       }
     }
 
-    if (parent) {
-      await tx.product.update({
-        where: {
-          id: parent.id
-        },
-        data: {
-          internalName: body.data.internalName,
-          active: body.data.active,
-          archivedAt: body.data.active ? null : parent.archivedAt ?? new Date()
-        }
-      });
-    }
-
-    for (const variant of catalogProduct?.variants ?? []) {
-      if (!variant.sourceProductId) {
-        continue;
-      }
-
-      await tx.product.update({
-        where: {
-          id: variant.sourceProductId
-        },
-        data: {
-          active: body.data.active,
-          archivedAt: body.data.active ? null : new Date()
-        }
-      });
-    }
-
-    for (const variant of parent?.variants ?? []) {
-      await tx.product.update({
-        where: {
-          id: variant.id
-        },
-        data: {
-          active: body.data.active,
-          archivedAt: body.data.active ? null : variant.archivedAt ?? new Date()
-        }
-      });
-    }
-
     await tx.auditLog.create({
       data: {
         actorUserId: session.userId,
@@ -205,7 +158,7 @@ export async function POST(request: Request) {
         entityId: catalogProduct?.id ?? parent?.id ?? body.data.parentSku,
         metadata: JSON.stringify({
           parentSku: body.data.parentSku,
-          active: body.data.active,
+          portalVisible: body.data.active,
           supplierIds: validSupplierIds
         })
       }

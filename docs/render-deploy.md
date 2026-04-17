@@ -104,8 +104,10 @@ Antes do deploy final:
 ## Validacao minima apos deploy
 
 - login admin
+- admin estoque
+- admin whatsapp
 - login fornecedor
-- importacao Tiny por SKU
+- importacao Tiny por SKU em `admin/produtos`
 - dashboard do fornecedor
 - produtos do fornecedor
 - pedidos recebidos

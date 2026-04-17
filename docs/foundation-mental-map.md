@@ -20,6 +20,16 @@ mindmap
         orders
         stock
         invoice future
+      Importacao pontual por SKU
+        Pesquisar Produtos
+        Validar codigo exato
+        Obter Produto
+        Obter Estrutura
+        Obter Estoque por id
+        Familias grandes
+          40+ filhas = importacao em etapas
+          ondas de 12 filhas
+          timeout estendido
       Reconcile
         stock
         sales
@@ -34,6 +44,10 @@ mindmap
       CatalogTinyMapping
       CatalogImage
       CatalogVariantAccountState
+      Overlay do portal
+        CatalogProduct.foundationMetadataJson
+        portalCatalogView.visible
+        portalCatalogView.archivedAt
     Comercial
       SalesOrder
       SalesOrderItem
@@ -89,6 +103,39 @@ flowchart TD
   D --> G["Salvar trilha em FoundationStockMovement"]
 ```
 
+## Fluxo oficial de importacao pontual por SKU
+
+```mermaid
+flowchart TD
+  A["Receber SKU"] --> B["Consultar fundacao primeiro"]
+  B -->|Encontrou completo| C["Responder pela fundacao"]
+  B -->|Nao encontrou ou faltou dado| D["Pesquisar Produtos no Tiny Pepper"]
+  D --> E["Validar codigo exato"]
+  E --> F["Capturar Tiny ID"]
+  F --> G["Obter Produto"]
+  G --> H["Se for pai, obter estrutura"]
+  H --> I["Obter estoque por id"]
+  I --> J["Persistir em CatalogProduct, CatalogVariant, CatalogInventory e CatalogTinyMapping"]
+  J --> K["Portal consome a fundacao"]
+```
+
+## Fluxo oficial para familia grande
+
+```mermaid
+flowchart TD
+  A["Receber SKU pai grande"] --> B["Consultar fundacao primeiro"]
+  B -->|Nao encontrou completo| C["Pesquisar Produtos no Tiny Pepper"]
+  C --> D["Obter Produto pai"]
+  D --> E["Obter Estrutura completa"]
+  E --> F["Montar plano de importacao em etapas"]
+  F --> G["Separar filhas em ondas curtas"]
+  G --> H["Consultar estoque por id em lote pequeno"]
+  H --> I["Persistir onda atual na fundacao"]
+  I --> J["Se faltar onda, repetir"]
+  J -->|Fim| K["Sincronizar catalogo final"]
+  K --> L["Portal consome a fundacao"]
+```
+
 ## Fluxo oficial para futuros sistemas
 
 1. identificar o dominio certo
@@ -103,5 +150,9 @@ flowchart TD
 - `Show Look` e `On Shop` sao dependentes, mas tambem afetam o saldo compartilhado
 - o saldo oficial do portal e sempre o `saldo multiempresa`
 - webhook e sinal, nao verdade final sem reconciliacao
+- importacao pontual por SKU usa Tiny Pepper como origem de cadastro
+- operacao normal da fundacao segue `webhook-first`
+- portal fornecedor nao apaga produto canonico; apenas oculta/exibe cards
+- modulo `WhatsApp` do admin cria links operacionais isolados do fluxo de sugestao do fornecedor
 - fotos e documentos devem ficar em dominio oficial de midia
 - sistema novo nao cria lista paralela se a fundacao ja tiver um dominio para aquilo

@@ -140,7 +140,8 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
     [catalogProducts, supplierOrders, replenishmentRequests] = await Promise.all([
       listFoundationCatalogProducts({
         supplierId,
-        onlyActive: true
+        onlyActive: true,
+        onlyPortalVisible: true
       }),
       prisma.supplierOrder.findMany({
         where: {

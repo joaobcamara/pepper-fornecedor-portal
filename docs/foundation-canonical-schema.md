@@ -66,6 +66,12 @@ Campos chave de governanca:
 - `lastReconciledTinyId`
 - `rawPayload`
 
+Regra estrutural adicional:
+
+- familia com `40` filhas ou mais entra como `importacao em etapas`
+- o plano da onda deve ficar auditavel em `TinyImportBatch` / `TinyImportItem`
+- o objetivo e evitar que o portal trate familia grande como um inspect curto comum
+
 ## Dominio 3. Eventos brutos e observabilidade
 
 Tabelas:

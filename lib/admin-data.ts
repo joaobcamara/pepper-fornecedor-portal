@@ -438,13 +438,13 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
       [...sizeSales.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
 
     return {
-      id: product.sourceProductId ?? product.id,
-      parentSku: product.parentSku,
-      internalName: product.internalName,
-      imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
-      active: product.active,
-      criticalStockThreshold: product.variants[0]?.parentCriticalStockThreshold ?? null,
-      lowStockThreshold: product.variants[0]?.parentLowStockThreshold ?? null,
+        id: product.sourceProductId ?? product.id,
+        parentSku: product.parentSku,
+        internalName: product.internalName,
+        imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
+        active: product.portalVisible,
+        criticalStockThreshold: product.variants[0]?.parentCriticalStockThreshold ?? null,
+        lowStockThreshold: product.variants[0]?.parentLowStockThreshold ?? null,
       variantCount: product.variants.length,
       totalStock,
       totalEstimatedCost,

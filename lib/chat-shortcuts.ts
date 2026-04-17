@@ -285,7 +285,8 @@ export async function getSupplierConversationShortcutGroups(supplierId: string):
     const [products, suggestions, replenishments, orders] = await Promise.all([
       listFoundationCatalogProducts({
         supplierId,
-        onlyActive: true
+        onlyActive: true,
+        onlyPortalVisible: true
       }),
       prisma.productSuggestion.findMany({
         where: { supplierId },

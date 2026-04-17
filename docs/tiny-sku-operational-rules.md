@@ -80,20 +80,30 @@ Usar para localizar o produto pelo SKU/codigo.
   - <https://tiny.com.br/api-docs/api2-produtos-pesquisar>
 
 ### 2. Obter Estoque Produto
-
-Usar para consultar o estoque do produto localizado.
-
-- parametro principal: `id`
-- fonte oficial:
-  - <https://tiny.com.br/api-docs/api2-produtos-estoque>
-
-### 3. Obter Produto
+### 2. Obter Produto
 
 Usar quando precisar dos detalhes completos do item apos localizar o `id`.
 
 - parametro principal: `id`
 - fonte oficial:
   - <https://tiny.com.br/api-docs/api2-produtos-obter>
+
+### 3. Obter Estrutura do Produto
+
+Usar quando o SKU localizado representar o pai/familia e a fundacao precisar
+listar as filhas reais da grade.
+
+- parametro principal: `id`
+- fonte oficial:
+  - <https://tiny.com.br/api-docs/api2-produtos-estrutura>
+
+### 4. Obter Estoque Produto
+
+Usar para consultar o estoque do produto localizado.
+
+- parametro principal: `id`
+- fonte oficial:
+  - <https://tiny.com.br/api-docs/api2-produtos-estoque>
 
 ## Fluxo correto quando o usuario informar o SKU pai
 
@@ -106,13 +116,55 @@ Passos:
 1. chamar `Pesquisar Produtos` com `pesquisa=01-2504`
 2. localizar o item cujo campo `codigo` seja exatamente `01-2504`
 3. guardar o `id` retornado
-4. se precisar do estoque do pai, chamar `Obter Estoque Produto` com esse `id`
-5. se precisar montar grade de variacoes, usar o SKU pai como referencia da familia e localizar as filhas
+4. chamar `Obter Produto` para carregar os dados completos do pai
+5. chamar `Obter Estrutura do Produto` com esse `id` para listar as filhas
+6. chamar `Obter Estoque Produto` com o `id` de cada item operacional que sera persistido
 
 Observacao importante:
 
 - em operacao real, o estoque valido para compra e reposicao e o da filha
 - o pai serve principalmente como referencia da familia
+
+## Regra estrutural para familias grandes
+
+Quando a familia tiver muitas filhas, a fundacao nao deve tratar isso como um
+`inspect` curto comum.
+
+Regra oficial:
+
+- ate `39` filhas = fluxo unico permitido
+- `40` filhas ou mais = familia grande
+- familia grande = importacao em etapas na fundacao
+
+Exemplo pratico:
+
+- `01-1195` com `59` filhas entra como `familia grande`
+
+## Importacao em etapas para SKU com muitas filhas
+
+Quando a familia for grande, a ordem correta passa a ser:
+
+1. localizar o SKU pai pelo Tiny
+2. obter o produto pai
+3. obter a estrutura completa do pai
+4. registrar o plano de importacao na fundacao
+5. hidratar as filhas em ondas curtas
+6. consultar estoque por `id` em lote pequeno
+7. persistir cada onda antes de seguir para a proxima
+8. so depois sincronizar catalogo final e deixar o portal consumir
+
+### Lote recomendado
+
+Regra atual da fundacao:
+
+- lote recomendado = `12` filhas por onda
+
+### Objetivo dessa regra
+
+- nao estourar timeout curto de fallback
+- nao pressionar a API do Tiny sem necessidade
+- manter auditoria do que ja entrou e do que ainda falta
+- permitir retomar a importacao sem recomeçar tudo
 
 ## Fluxo correto quando o usuario informar o SKU filha
 
@@ -125,21 +177,24 @@ Passos:
 1. chamar `Pesquisar Produtos` com `pesquisa=01-2504-22-01`
 2. localizar o item cujo campo `codigo` seja exatamente `01-2504-22-01`
 3. guardar o `id` retornado
-4. chamar `Obter Estoque Produto` com esse `id`
-5. usar esse retorno como estoque real da variacao
+4. chamar `Obter Produto` com esse `id`
+5. chamar `Obter Estoque Produto` com esse `id`
+6. usar esse retorno como estoque real da variacao
 
 ## Regra para mais de uma API
 
 Fluxo mais comum:
 
 1. `Pesquisar Produtos`
-2. `Obter Estoque Produto`
+2. `Obter Produto`
+3. `Obter Estoque Produto`
 
 Fluxo completo quando precisa mais contexto:
 
 1. `Pesquisar Produtos`
 2. `Obter Produto`
-3. `Obter Estoque Produto`
+3. `Obter Estrutura do Produto`
+4. `Obter Estoque Produto`
 
 ## Boa pratica obrigatoria
 
@@ -182,8 +237,27 @@ Portanto:
 3. se nao existir, usar o SKU Pepper para localizar o produto no Tiny
 4. validar o `codigo` exato
 5. capturar o `id`
-6. consultar detalhes/estoque por `id`
-7. persistir na fundacao
+6. consultar detalhes por `id`
+7. se for pai, consultar a estrutura por `id`
+8. consultar estoque por `id`
+9. persistir na fundacao
+
+## Estrategia de povoamento da fundacao
+
+Na reta final deste projeto, a regra oficial e:
+
+- `webhook-first` para povoamento organico
+- `Tiny manual` apenas para:
+  - inspecao por SKU
+  - importacao pontual por SKU
+  - reconciliacao pontual
+
+Portanto:
+
+- nao forcar backfill grande agora
+- nao tentar puxar catalogo inteiro de uma vez
+- deixar pedido, estoque e status alimentarem a fundacao no tempo real do negocio
+- usar importacao pontual por SKU quando um item ainda nao existir ou estiver incompleto
 
 ## Resumo pratico
 

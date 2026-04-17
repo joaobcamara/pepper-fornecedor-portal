@@ -3,6 +3,8 @@ import { syncCatalogProductByParentSku } from "@/lib/catalog-sync";
 import {
   getPepperCatalogImportAccountKey,
   getPepperTinyAccountLabel,
+  getPepperTinyPlanCallsPerMinute,
+  getPepperTinyRecommendedTargetCallsPerMinute,
   PEPPER_TINY_ACCOUNT_REFERENCES,
   shouldReadAvailableMultiCompanyStock,
   type PepperTinyAccountKey
@@ -10,6 +12,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getParentSku, normalizeSku, parseSku } from "@/lib/sku";
 import { getStockBand } from "@/lib/stock";
+import { buildFoundationSkuImportPlan, type FoundationSkuImportPlan } from "@/lib/foundation-import-policy";
 
 type TinyApiEnvelope = {
   retorno?: {
@@ -68,6 +71,7 @@ export type TinyInspectionResult = {
   };
   variants: TinyInspectedVariant[];
   suggestions: TinySearchCandidate[];
+  importPlan?: FoundationSkuImportPlan;
 };
 
 export type TinyOrderSearchResult = {
@@ -128,15 +132,34 @@ function getTinyThrottleState(accountKey: TinyAccountKey) {
   return created;
 }
 
-function getTinyConfiguredMinIntervalMs() {
-  const configured = Number(process.env.TINY_API_MIN_INTERVAL_MS ?? "");
-  if (Number.isFinite(configured) && configured >= 0) {
+function getTinyAccountEnvPrefix(accountKey: TinyAccountKey) {
+  return accountKey === "pepper" ? "TINY_PEPPER" : accountKey === "showlook" ? "TINY_SHOWLOOK" : "TINY_ONSHOP";
+}
+
+function readTinyPositiveNumber(raw: string | undefined) {
+  const parsed = Number(raw ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getTinyConfiguredMinIntervalMs(accountKey: TinyAccountKey) {
+  const accountEnvPrefix = getTinyAccountEnvPrefix(accountKey);
+  const configured =
+    readTinyPositiveNumber(process.env[`${accountEnvPrefix}_API_MIN_INTERVAL_MS`]) ??
+    readTinyPositiveNumber(process.env.TINY_API_MIN_INTERVAL_MS);
+
+  if (configured !== null && configured >= 0) {
     return configured;
   }
 
-  const targetCallsPerMinute = Number(process.env.TINY_API_TARGET_CALLS_PER_MIN ?? "80");
-  if (Number.isFinite(targetCallsPerMinute) && targetCallsPerMinute > 0) {
-    return Math.ceil(60000 / targetCallsPerMinute);
+  const targetCallsPerMinute =
+    readTinyPositiveNumber(process.env[`${accountEnvPrefix}_API_TARGET_CALLS_PER_MIN`]) ??
+    readTinyPositiveNumber(process.env.TINY_API_TARGET_CALLS_PER_MIN) ??
+    getPepperTinyRecommendedTargetCallsPerMinute(accountKey);
+
+  if (targetCallsPerMinute !== null && targetCallsPerMinute > 0) {
+    const planFloorIntervalMs = Math.ceil(60000 / getPepperTinyPlanCallsPerMinute(accountKey));
+    const targetIntervalMs = Math.ceil(60000 / targetCallsPerMinute);
+    return Math.max(planFloorIntervalMs, targetIntervalMs);
   }
 
   return 750;
@@ -144,7 +167,7 @@ function getTinyConfiguredMinIntervalMs() {
 
 function getTinyMinIntervalMs(accountKey: TinyAccountKey) {
   const state = getTinyThrottleState(accountKey);
-  return Math.max(getTinyConfiguredMinIntervalMs(), state.adaptiveMinIntervalMs ?? 0);
+  return Math.max(getTinyConfiguredMinIntervalMs(accountKey), state.adaptiveMinIntervalMs ?? 0);
 }
 
 function sleep(ms: number) {
@@ -838,6 +861,7 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
   const structureRefs = resolvedParentId
     ? await getTinyProductStructureById(resolvedParentId, "pepper").catch(() => [])
     : [];
+  const importPlan = buildFoundationSkuImportPlan(structureRefs.length);
   const variationRefs =
     structureRefs.length > 0
       ? structureRefs.map((entry) => ({
@@ -916,7 +940,8 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
       imageUrl: parentImage
     },
     variants,
-    suggestions: searchResults.slice(0, 8)
+    suggestions: searchResults.slice(0, 8),
+    importPlan
   };
 }
 
@@ -926,22 +951,25 @@ export async function importTinyProductBySku(params: {
   actorUserId: string;
 }) {
   const inspection = await inspectTinyProductBySku(params.sku);
+  const importPlan = inspection.importPlan ?? buildFoundationSkuImportPlan(inspection.variants.length);
   const now = new Date();
+  const batch = await prisma.tinyImportBatch.create({
+    data: {
+      status: "processing",
+      importedByUserId: params.actorUserId,
+      notes:
+        importPlan.mode === "staged_family"
+          ? `Importaçao em etapas por SKU ${inspection.searchedSku} | filhas=${importPlan.variantCount} | lote=${importPlan.chunkSize}`
+          : `Importaçao por SKU ${inspection.searchedSku}`
+    }
+  });
 
-  return prisma.$transaction(async (tx) => {
-    const batch = await tx.tinyImportBatch.create({
-      data: {
-        status: "processing",
-        importedByUserId: params.actorUserId,
-        notes: `ImportaÃ§Ã£o por SKU ${inspection.searchedSku}`
-      }
-    });
-
+  try {
     let parentId: string | null = null;
     const parsedParent = parseSku(inspection.parent.sku);
 
     if (parsedParent) {
-      const existingParent = await tx.product.findUnique({
+      const existingParent = await prisma.product.findUnique({
         where: {
           sku: inspection.parent.sku
         }
@@ -967,7 +995,7 @@ export async function importTinyProductBySku(params: {
       };
 
       const parent = existingParent
-        ? await tx.product.update({
+        ? await prisma.product.update({
             where: { sku: inspection.parent.sku },
             data: {
               tinyProductId: parentData.tinyProductId,
@@ -977,7 +1005,7 @@ export async function importTinyProductBySku(params: {
               fallbackInventory: parentData.fallbackInventory
             }
           })
-        : await tx.product.create({ data: parentData });
+        : await prisma.product.create({ data: parentData });
 
       parentId = parent.id;
     }
@@ -985,97 +1013,100 @@ export async function importTinyProductBySku(params: {
     let importedVariants = 0;
 
     for (const variant of inspection.variants) {
-      const existingVariant = await tx.product.findUnique({
-        where: {
-          sku: variant.sku
-        }
-      });
-
-      const product = existingVariant
-        ? await tx.product.update({
-            where: { sku: variant.sku },
-            data: {
-              skuParent: inspection.parent.sku,
-              baseCode: variant.baseCode,
-              quantityCode: variant.quantityCode,
-              sizeCode: variant.sizeCode ?? null,
-              colorCode: variant.colorCode ?? null,
-              tinyProductId: variant.id,
-              tinyVariationId: variant.id,
-              tinyCode: variant.sku,
-              imageUrl: existingVariant.imageUrl ?? variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
-              parentId: parentId ?? undefined,
-              syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-              lastSyncedAt: now,
-              fallbackInventory: variant.quantity ?? existingVariant.fallbackInventory
-            }
-          })
-        : await tx.product.create({
-            data: {
-              internalName: variant.name,
-              sku: variant.sku,
-              skuParent: inspection.parent.sku,
-              baseCode: variant.baseCode,
-              quantityCode: variant.quantityCode,
-              sizeCode: variant.sizeCode ?? null,
-              colorCode: variant.colorCode ?? null,
-              tinyProductId: variant.id,
-              tinyVariationId: variant.id,
-              tinyCode: variant.sku,
-              imageUrl: variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
-              kind: ProductKind.VARIANT,
-              parentId: parentId ?? undefined,
-              syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-              lastSyncedAt: now,
-              fallbackInventory: variant.quantity
-            }
-          });
-
-      await tx.inventorySnapshot.create({
-        data: {
-          productId: product.id,
-          quantity: variant.quantity,
-          status: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-          stockBand: getStockBand(variant.quantity)
-        }
-      });
-
-      for (const supplierId of params.supplierIds) {
-        await tx.productSupplier.upsert({
+      await prisma.$transaction(async (tx) => {
+        const existingVariant = await tx.product.findUnique({
           where: {
-            productId_supplierId: {
-              productId: product.id,
-              supplierId
-            }
-          },
-          update: {
-            active: true
-          },
-          create: {
-            productId: product.id,
-            supplierId,
-            active: true
+            sku: variant.sku
           }
         });
-      }
 
-      await tx.tinyImportItem.create({
-        data: {
-          batchId: batch.id,
-          tinyProductId: variant.id,
-          sku: variant.sku,
-          tinyCode: variant.sku,
-          imageUrl: variant.imageUrl,
-          rawPayload: JSON.stringify(variant.raw),
-          selectedForImport: true,
-          status: "imported"
+        const product = existingVariant
+          ? await tx.product.update({
+              where: { sku: variant.sku },
+              data: {
+                skuParent: inspection.parent.sku,
+                baseCode: variant.baseCode,
+                quantityCode: variant.quantityCode,
+                sizeCode: variant.sizeCode ?? null,
+                colorCode: variant.colorCode ?? null,
+                tinyProductId: variant.id,
+                tinyVariationId: variant.id,
+                tinyCode: variant.sku,
+                imageUrl:
+                  existingVariant.imageUrl ?? variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
+                parentId: parentId ?? undefined,
+                syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
+                lastSyncedAt: now,
+                fallbackInventory: variant.quantity ?? existingVariant.fallbackInventory
+              }
+            })
+          : await tx.product.create({
+              data: {
+                internalName: variant.name,
+                sku: variant.sku,
+                skuParent: inspection.parent.sku,
+                baseCode: variant.baseCode,
+                quantityCode: variant.quantityCode,
+                sizeCode: variant.sizeCode ?? null,
+                colorCode: variant.colorCode ?? null,
+                tinyProductId: variant.id,
+                tinyVariationId: variant.id,
+                tinyCode: variant.sku,
+                imageUrl: variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
+                kind: ProductKind.VARIANT,
+                parentId: parentId ?? undefined,
+                syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
+                lastSyncedAt: now,
+                fallbackInventory: variant.quantity
+              }
+            });
+
+        await tx.inventorySnapshot.create({
+          data: {
+            productId: product.id,
+            quantity: variant.quantity,
+            status: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
+            stockBand: getStockBand(variant.quantity)
+          }
+        });
+
+        for (const supplierId of params.supplierIds) {
+          await tx.productSupplier.upsert({
+            where: {
+              productId_supplierId: {
+                productId: product.id,
+                supplierId
+              }
+            },
+            update: {
+              active: true
+            },
+            create: {
+              productId: product.id,
+              supplierId,
+              active: true
+            }
+          });
         }
+
+        await tx.tinyImportItem.create({
+          data: {
+            batchId: batch.id,
+            tinyProductId: variant.id,
+            sku: variant.sku,
+            tinyCode: variant.sku,
+            imageUrl: variant.imageUrl,
+            rawPayload: JSON.stringify(variant.raw),
+            selectedForImport: true,
+            status: "imported"
+          }
+        });
       });
 
       importedVariants += 1;
     }
 
-    await tx.auditLog.create({
+    await prisma.auditLog.create({
       data: {
         actorUserId: params.actorUserId,
         action: "tiny.import",
@@ -1084,12 +1115,15 @@ export async function importTinyProductBySku(params: {
         metadata: JSON.stringify({
           sku: inspection.parent.sku,
           importedVariants,
-          supplierIds: params.supplierIds
+          supplierIds: params.supplierIds,
+          importMode: importPlan.mode,
+          importChunkSize: importPlan.chunkSize,
+          variantCount: importPlan.variantCount
         })
       }
     });
 
-    await tx.tinyImportBatch.update({
+    await prisma.tinyImportBatch.update({
       where: { id: batch.id },
       data: {
         status: "completed",
@@ -1098,14 +1132,26 @@ export async function importTinyProductBySku(params: {
     });
 
     if (parentId) {
-      await syncCatalogProductByParentSku(tx, inspection.parent.sku);
+      await syncCatalogProductByParentSku(prisma, inspection.parent.sku);
     }
 
     return {
       batchId: batch.id,
       importedVariants,
-      parentSku: inspection.parent.sku
+      parentSku: inspection.parent.sku,
+      importPlan
     };
-  });
+  } catch (error) {
+    await prisma.tinyImportBatch.update({
+      where: { id: batch.id },
+      data: {
+        status: "failed",
+        finishedAt: new Date(),
+        notes: `Falha ao importar SKU ${inspection.searchedSku}`
+      }
+    });
+
+    throw error;
+  }
 }
 

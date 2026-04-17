@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Checklist final para subir o portal atual em Vercel ou Netlify usando:
+Checklist final para subir o portal atual no Render usando:
 
 - dominio base: `fornecedor.pepperecommerce.com.br`
 - admin: `fornecedor.pepperecommerce.com.br/admin`
@@ -57,7 +57,9 @@ Checklist final para subir o portal atual em Vercel ou Netlify usando:
 
 - [ ] login fornecedor
 - [ ] login admin
-- [ ] importacao Tiny por SKU
+- [ ] `admin/estoque`
+- [ ] `admin/whatsapp`
+- [ ] importacao Tiny por SKU dentro de `admin/produtos`
 - [ ] produtos do fornecedor
 - [ ] dashboard do fornecedor
 - [ ] financeiro do fornecedor
@@ -70,6 +72,7 @@ Checklist final para subir o portal atual em Vercel ou Netlify usando:
 - [ ] pedidos recebidos
 - [ ] financeiro do admin
 - [ ] conversas com cards de contexto e slash commands
+- [ ] link compartilhavel de WhatsApp do admin
 - [ ] cadastro de fornecedor com logo por upload, contato e endereco
 - [ ] sincronizacoes
 

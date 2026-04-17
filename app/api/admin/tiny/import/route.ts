@@ -10,6 +10,7 @@ import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { withTinyFallbackTimeout } from "@/lib/tiny-fallback-timeout";
 import { getTinyAccountLabel, importTinyProductBySku, inspectTinyProductBySku } from "@/lib/tiny";
 import { getCurrentSession } from "@/lib/session";
+import { FOUNDATION_LARGE_FAMILY_IMPORT_TIMEOUT_MS } from "@/lib/foundation-import-policy";
 
 const bodySchema = z.object({
   sku: z.string().min(3),
@@ -100,7 +101,12 @@ export async function POST(request: Request) {
         sku: body.data.sku,
         supplierIds: validSupplierIds,
         actorUserId: session.userId
-      })
+      }),
+      {
+        timeoutMs: FOUNDATION_LARGE_FAMILY_IMPORT_TIMEOUT_MS,
+        message:
+          "A importacao do Tiny demorou alem da janela segura definida para a fundacao. Revise a familia do SKU e, se for uma familia grande, siga a importacao por etapas."
+      }
     );
 
     return NextResponse.json({

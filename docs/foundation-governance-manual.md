@@ -113,6 +113,7 @@ O sistema novo deve ter:
 - [ ] admin ve o reflexo?
 - [ ] fornecedor ve o reflexo quando aplicavel?
 - [ ] documentacao foi atualizada?
+- [ ] `foundation-navigation-map.md` foi atualizado?
 
 ## Ordem de expansao recomendada
 

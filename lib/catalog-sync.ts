@@ -87,17 +87,6 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
     return null;
   }
 
-  const existingCatalogProduct = await db.catalogProduct.findFirst({
-    where: {
-      OR: [{ sourceProductId: parent.id }, { skuParent: parent.sku }]
-    },
-    select: { id: true }
-  });
-
-  if (existingCatalogProduct) {
-    await removeCatalogProduct(db, existingCatalogProduct.id);
-  }
-
   const availableSizes = getDistinct(
     parent.variants.map((variant) => getSizeLabel(variant.sizeCode))
   );
@@ -113,29 +102,57 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
     model: null,
     gender: null,
     style: null,
-    availableSizes,
-    availableColors
+      availableSizes,
+      availableColors
   });
 
-  const catalogProduct = await db.catalogProduct.create({
-    data: {
-      sourceProductId: parent.id,
-      skuParent: parent.sku,
-      baseCode: parent.baseCode,
-      quantityCode: parent.quantityCode,
-      name: parent.internalName,
-      availableSizes: availableSizes.join(", "),
-      availableColors: availableColors.join(", "),
-      salesContextAi: parentAi.salesContextAi,
-      searchText: parentAi.searchText,
-      intentTags: parentAi.intentTags,
-      tinyProductId: parent.tinyProductId,
-      tinyCode: parent.tinyCode,
-      mainImageUrl: parent.imageUrl,
-      active: parent.active,
-      archivedAt: parent.archivedAt
-    }
+  const existingCatalogProduct = await db.catalogProduct.findFirst({
+    where: {
+      OR: [{ sourceProductId: parent.id }, { skuParent: parent.sku }]
+    },
+    select: { id: true }
   });
+
+  const catalogProduct = existingCatalogProduct
+    ? await db.catalogProduct.update({
+        where: { id: existingCatalogProduct.id },
+        data: {
+          sourceProductId: parent.id,
+          skuParent: parent.sku,
+          baseCode: parent.baseCode,
+          quantityCode: parent.quantityCode,
+          name: parent.internalName,
+          availableSizes: availableSizes.join(", "),
+          availableColors: availableColors.join(", "),
+          salesContextAi: parentAi.salesContextAi,
+          searchText: parentAi.searchText,
+          intentTags: parentAi.intentTags,
+          tinyProductId: parent.tinyProductId,
+          tinyCode: parent.tinyCode,
+          mainImageUrl: parent.imageUrl,
+          active: parent.active,
+          archivedAt: parent.archivedAt
+        }
+      })
+    : await db.catalogProduct.create({
+        data: {
+          sourceProductId: parent.id,
+          skuParent: parent.sku,
+          baseCode: parent.baseCode,
+          quantityCode: parent.quantityCode,
+          name: parent.internalName,
+          availableSizes: availableSizes.join(", "),
+          availableColors: availableColors.join(", "),
+          salesContextAi: parentAi.salesContextAi,
+          searchText: parentAi.searchText,
+          intentTags: parentAi.intentTags,
+          tinyProductId: parent.tinyProductId,
+          tinyCode: parent.tinyCode,
+          mainImageUrl: parent.imageUrl,
+          active: parent.active,
+          archivedAt: parent.archivedAt
+        }
+      });
 
   const supplierIds = getDistinct([
     ...parent.assignments
@@ -145,8 +162,12 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
       variant.assignments
         .filter((assignment) => assignment.active)
         .map((assignment) => assignment.supplierId)
-    )
+      )
   ]);
+
+  await db.catalogProductSupplier.deleteMany({
+    where: { catalogProductId: catalogProduct.id }
+  });
 
   if (supplierIds.length > 0) {
     await db.catalogProductSupplier.createMany({
@@ -156,6 +177,14 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
       }))
     });
   }
+
+  await db.catalogImage.deleteMany({
+    where: {
+      catalogProductId: catalogProduct.id,
+      catalogVariantId: null,
+      source: "portal"
+    }
+  });
 
   if (parent.imageUrl) {
     await db.catalogImage.create({
@@ -170,8 +199,26 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
   }
 
   if (parent.tinyProductId) {
-    await db.catalogTinyMapping.create({
-      data: {
+    await db.catalogTinyMapping.upsert({
+      where: {
+        accountKey_entityType_sku: {
+          accountKey: getPepperCatalogImportAccountKey(),
+          entityType: "product",
+          sku: parent.sku
+        }
+      },
+      update: {
+        catalogProductId: catalogProduct.id,
+        tinyId: parent.tinyProductId,
+        tinyCode: parent.tinyCode,
+        lastSyncAt: parent.lastSyncedAt,
+        rawPayload: JSON.stringify({
+          sku: parent.sku,
+          tinyCode: parent.tinyCode,
+          sourceProductId: parent.id
+        })
+      },
+      create: {
         accountKey: getPepperCatalogImportAccountKey(),
         entityType: "product",
         catalogProductId: catalogProduct.id,
@@ -188,6 +235,8 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
     });
   }
 
+  const processedVariantSkus: string[] = [];
+
   for (const variant of parent.variants) {
     const latestInventory = variant.inventorySnapshots[0];
     const variantAi = buildCatalogAiPackage({
@@ -198,31 +247,69 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
       sizeLabel: getSizeLabel(variant.sizeCode),
       availableSizes,
       availableColors,
-      availableMultiCompanyStock:
+        availableMultiCompanyStock:
         latestInventory?.quantity ?? variant.fallbackInventory ?? null
     });
 
-    const catalogVariant = await db.catalogVariant.create({
-      data: {
-        catalogProductId: catalogProduct.id,
-        sourceProductId: variant.id,
-        sku: variant.sku,
-        quantityCode: variant.quantityCode,
-        sizeCode: variant.sizeCode,
-        sizeLabel: getSizeLabel(variant.sizeCode),
-        colorCode: variant.colorCode,
-        colorLabel: getColorLabel(variant.colorCode),
-        salesContextAi: variantAi.salesContextAi,
-        searchText: variantAi.searchText,
-        intentTags: variantAi.intentTags,
-        tinyProductId: variant.tinyProductId,
-        tinyCode: variant.tinyCode,
-        active: variant.active
-      }
+    const existingCatalogVariant = await db.catalogVariant.findFirst({
+      where: {
+        OR: [{ sourceProductId: variant.id }, { sku: variant.sku }]
+      },
+      select: { id: true }
     });
 
-    await db.catalogInventory.create({
-      data: {
+    const catalogVariant = existingCatalogVariant
+      ? await db.catalogVariant.update({
+          where: { id: existingCatalogVariant.id },
+          data: {
+            catalogProductId: catalogProduct.id,
+            sourceProductId: variant.id,
+            sku: variant.sku,
+            quantityCode: variant.quantityCode,
+            sizeCode: variant.sizeCode,
+            sizeLabel: getSizeLabel(variant.sizeCode),
+            colorCode: variant.colorCode,
+            colorLabel: getColorLabel(variant.colorCode),
+            salesContextAi: variantAi.salesContextAi,
+            searchText: variantAi.searchText,
+            intentTags: variantAi.intentTags,
+            tinyProductId: variant.tinyProductId,
+            tinyCode: variant.tinyCode,
+            active: variant.active
+          }
+        })
+      : await db.catalogVariant.create({
+          data: {
+            catalogProductId: catalogProduct.id,
+            sourceProductId: variant.id,
+            sku: variant.sku,
+            quantityCode: variant.quantityCode,
+            sizeCode: variant.sizeCode,
+            sizeLabel: getSizeLabel(variant.sizeCode),
+            colorCode: variant.colorCode,
+            colorLabel: getColorLabel(variant.colorCode),
+            salesContextAi: variantAi.salesContextAi,
+            searchText: variantAi.searchText,
+            intentTags: variantAi.intentTags,
+            tinyProductId: variant.tinyProductId,
+            tinyCode: variant.tinyCode,
+            active: variant.active
+          }
+        });
+
+    await db.catalogInventory.upsert({
+      where: {
+        catalogVariantId: catalogVariant.id
+      },
+      update: {
+        availableMultiCompanyStock:
+          latestInventory?.quantity ?? variant.fallbackInventory ?? null,
+        stockStatus: latestInventory?.stockBand ?? "not_imported",
+        inventorySyncStatus: latestInventory?.status ?? "STALE",
+        lastStockSyncAt: latestInventory?.syncedAt ?? variant.lastSyncedAt,
+        source: "tiny"
+      },
+      create: {
         catalogVariantId: catalogVariant.id,
         availableMultiCompanyStock:
           latestInventory?.quantity ?? variant.fallbackInventory ?? null,
@@ -230,6 +317,14 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
         inventorySyncStatus: latestInventory?.status ?? "STALE",
         lastStockSyncAt: latestInventory?.syncedAt ?? variant.lastSyncedAt,
         source: "tiny"
+      }
+    });
+
+    await db.catalogImage.deleteMany({
+      where: {
+        catalogProductId: catalogProduct.id,
+        catalogVariantId: catalogVariant.id,
+        source: "portal"
       }
     });
 
@@ -247,8 +342,28 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
     }
 
     if (variant.tinyProductId) {
-      await db.catalogTinyMapping.create({
-        data: {
+      await db.catalogTinyMapping.upsert({
+        where: {
+          accountKey_entityType_sku: {
+            accountKey: getPepperCatalogImportAccountKey(),
+            entityType: "variant",
+            sku: variant.sku
+          }
+        },
+        update: {
+          catalogProductId: catalogProduct.id,
+          catalogVariantId: catalogVariant.id,
+          tinyId: variant.tinyProductId,
+          tinyParentId: parent.tinyProductId,
+          tinyCode: variant.tinyCode,
+          lastSyncAt: variant.lastSyncedAt,
+          rawPayload: JSON.stringify({
+            sku: variant.sku,
+            tinyCode: variant.tinyCode,
+            sourceProductId: variant.id
+          })
+        },
+        create: {
           accountKey: getPepperCatalogImportAccountKey(),
           entityType: "variant",
           catalogProductId: catalogProduct.id,
@@ -266,7 +381,21 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
         }
       });
     }
+
+    processedVariantSkus.push(variant.sku);
   }
+
+  await db.catalogVariant.updateMany({
+    where: {
+      catalogProductId: catalogProduct.id,
+      sku: {
+        notIn: processedVariantSkus
+      }
+    },
+    data: {
+      active: false
+    }
+  });
 
   return catalogProduct.id;
 }

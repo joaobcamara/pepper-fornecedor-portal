@@ -158,7 +158,7 @@ function resolveSupplierPageKey(pathname: string | null): PepperIaBubblePageKey 
   if (!pathname) return "generic";
   if (pathname === "/admin" || pathname === "/dashboard" || pathname.includes("/dashboard")) return "dashboard";
   if (pathname.includes("/admin/produtos") || pathname.includes("/produtos")) return "products";
-  if (pathname.includes("/admin/importacao-tiny")) return "imports";
+  if (pathname.includes("/admin/importacao-tiny")) return "products";
   if (pathname.includes("/admin/sincronizacoes")) return "sync";
   if (pathname.includes("/admin/sugestoes-produto") || pathname.includes("/sugestao-produto")) return "suggestion";
   if (pathname.includes("/financeiro")) return "finance";
@@ -196,7 +196,6 @@ export function PepperIaBubble({
 
   const resolvedPageKey = pageKey ?? resolveSupplierPageKey(pathname);
   const theme = SUPPLIER_THEMES[resolvedPageKey] ?? SUPPLIER_THEMES.generic;
-  const teaserText = pageHint?.trim() || theme.defaultHint;
   const Icon = role === "SUPPLIER" ? theme.icon : Bot;
 
   useEffect(() => {
@@ -275,35 +274,36 @@ export function PepperIaBubble({
   }
 
   return (
-    <>
-      <div className="fixed bottom-4 right-3 z-50 hidden flex-col items-end gap-3 md:flex md:bottom-5 md:right-5">
+      <>
+      <div className="fixed right-3 top-20 z-50 flex flex-col items-end gap-3 lg:bottom-5 lg:right-5 lg:top-auto">
         <button
           type="button"
           onClick={() => setIsOpen((current) => !current)}
           className={cn(
-            "relative inline-flex items-center gap-2 rounded-full border px-3 py-2.5 text-xs font-semibold transition duration-300 hover:scale-[1.02] sm:gap-3 sm:px-4 sm:py-3 sm:text-sm",
+            "relative inline-flex h-12 w-12 items-center justify-center rounded-full border p-0 text-xs font-semibold transition duration-300 hover:scale-[1.02] lg:h-auto lg:w-auto lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
             role === "ADMIN"
               ? "border-[#d7dff2] bg-[linear-gradient(135deg,#f7faff_0%,#edf3ff_58%,#dde9ff_100%)] text-[#2f4678] shadow-[0_18px_42px_rgba(91,113,162,0.18)]"
               : theme.buttonClassName,
             buttonAnimationClassName
           )}
+          aria-label="Abrir Pepper IA"
         >
           <span
             className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md sm:h-10 sm:w-10",
+              "flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md lg:h-10 lg:w-10",
               theme.iconWrapClassName,
               role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-wrap"
             )}
           >
             {isOpen ? (
-              <X className="h-4 w-4 sm:h-5 sm:w-5" />
+              <X className="h-4 w-4 lg:h-5 lg:w-5" />
             ) : (
-              <Icon className={cn("h-4 w-4 sm:h-5 sm:w-5", role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-icon")} />
+              <Icon className={cn("h-4 w-4 lg:h-5 lg:w-5", role === "SUPPLIER" && theme.animation === "fire" && "pepper-fire-icon")} />
             )}
           </span>
-          <span className="font-semibold">Pepper IA</span>
+          <span className="hidden font-semibold lg:inline">Pepper IA</span>
           {alertCount > 0 ? (
-            <span className="absolute -right-1 -top-1 inline-flex min-h-6 min-w-6 items-center justify-center rounded-full border-2 border-white bg-[#ef6a3a] px-1 text-[11px] font-bold leading-none text-white shadow-[0_10px_24px_rgba(239,106,58,0.28)]">
+            <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-[#ef6a3a] px-1 text-[10px] font-bold leading-none text-white shadow-[0_10px_24px_rgba(239,106,58,0.28)] lg:min-h-6 lg:min-w-6 lg:text-[11px]">
               {alertCount > 9 ? "9+" : alertCount}
             </span>
           ) : null}
@@ -313,7 +313,7 @@ export function PepperIaBubble({
       {isOpen ? (
         <div className="fixed inset-0 z-40 bg-slate-950/20 backdrop-blur-[2px]" onClick={() => setIsOpen(false)}>
           <div
-            className="absolute inset-x-0 bottom-0 flex h-[85vh] w-full flex-col overflow-hidden rounded-t-[2rem] border border-white/70 bg-white/95 shadow-[0_25px_80px_rgba(15,23,42,0.22)] md:inset-x-auto md:bottom-24 md:right-5 md:h-[min(42rem,calc(100vh-8rem))] md:w-[min(26rem,calc(100vw-2.5rem))] md:rounded-[2rem]"
+            className="absolute inset-x-3 bottom-3 top-20 flex w-auto flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/95 shadow-[0_25px_80px_rgba(15,23,42,0.22)] md:inset-x-auto md:bottom-24 md:right-5 md:top-auto md:h-[min(42rem,calc(100vh-8rem))] md:w-[min(26rem,calc(100vw-2.5rem))]"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="border-b border-slate-200 px-5 py-4">

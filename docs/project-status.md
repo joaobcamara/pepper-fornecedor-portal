@@ -24,9 +24,10 @@
 ### Admin
 
 - `/admin`
+- `/admin/estoque`
 - `/admin/produtos`
 - `/admin/financeiro`
-- `/admin/importacao-tiny`
+- `/admin/whatsapp`
 - `/admin/sugestoes-produto`
 - `/admin/solicitacoes-reposicao`
 - `/admin/pedidos-fornecedor`
@@ -70,6 +71,7 @@ Ja concluido:
 
 - `/dashboard-insights` continua existindo apenas como redirecionamento legado para `/dashboard`
 - `/pepperia` e `/admin/pepperia` continuam existindo apenas como redirecionamentos, porque a Pepper IA agora funciona como bubble
+- `/admin/importacao-tiny` continua existindo apenas como redirecionamento legado para `/admin/produtos`
 
 ## Pendencias principais ainda abertas
 

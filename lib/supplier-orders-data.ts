@@ -89,7 +89,8 @@ export async function getAdminSupplierOrderPageData() {
         }
       }),
       listFoundationCatalogProducts({
-        onlyActive: true
+        onlyActive: true,
+        onlyPortalVisible: true
       })
     ]);
 

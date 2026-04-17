@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { buildPurchaseOrderHtml } from "@/lib/order-html";
+import { buildPurchaseOrderHtml } from "@/lib/order-html-shared";
 import { getCurrentSession } from "@/lib/session";
 
 const itemSchema = z.object({

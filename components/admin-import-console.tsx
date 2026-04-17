@@ -173,8 +173,8 @@ export function AdminImportConsole({
 
       setFeedback(
         payload.source === "foundation"
-          ? `Produto ja existia na fundacao. Vinculo confirmado para o SKU ${payload.parentSku} com ${payload.importedVariants} variacoes prontas no sistema.`
-          : `Importacao concluida via Tiny ${payload.sourceAccountLabel ?? "Pepper"}. ${payload.importedVariants} variacoes vinculadas ao SKU ${payload.parentSku} e armazenadas na fundacao.`
+          ? `Produto ja existia na fundacao. Vinculo confirmado para o SKU ${payload.parentSku} com ${payload.importedVariants} variacoes prontas para o portal consumir.`
+          : `Importacao concluida via Tiny ${payload.sourceAccountLabel ?? "Pepper"}. ${payload.importedVariants} variacoes vinculadas ao SKU ${payload.parentSku} e gravadas na fundacao.`
       );
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Falha ao importar o produto.");
@@ -193,11 +193,11 @@ export function AdminImportConsole({
     <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#d27a4f]">Importacao Tiny</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#d27a4f]">Fundacao primeiro</p>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Buscar por SKU e revisar pai + filhas</h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-            A busca prioriza SKU completo, valida o match exato, resolve a hierarquia pai/filha e ja traz a grade cor x
-            tamanho pronta para revisao.
+            A busca consulta a fundacao primeiro. Quando o SKU ainda nao estiver nela, o sistema consulta o Tiny Pepper,
+            valida o match exato e grava o produto completo na fundacao antes de o portal consumir.
           </p>
         </div>
 
@@ -240,7 +240,7 @@ export function AdminImportConsole({
                 className="inline-flex h-fit items-center gap-2 rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-300/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isInspecting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <DatabaseZap className="h-4 w-4" />}
-                Inspecionar na fundacao
+                Buscar no portal
               </button>
             </div>
 
@@ -319,7 +319,7 @@ export function AdminImportConsole({
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#eb6232] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ffb290] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {isImporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Importar para o sistema
+                    {inspection.source === "foundation" ? "Vincular ao portal" : "Importar do Tiny"}
                 </button>
               </div>
 

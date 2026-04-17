@@ -73,6 +73,208 @@ Resultado:
 - o pai serve como referencia comercial e agrupamento
 - a filha serve para estoque, cor, tamanho, imagem e operacao individual
 
+## Parte importante: codigo de cor com 2, 4 e 6 digitos
+
+### Regra geral
+
+Na Pepper, o bloco final da cor nem sempre tera apenas 2 digitos.
+
+Ele pode ter:
+
+- 2 digitos
+- 4 digitos
+- 6 digitos
+
+Isso acontece porque existem cores simples e tambem cores expandidas / compostas / especificas no catalogo.
+
+### Como interpretar isso
+
+O bloco da cor deve sempre ser tratado como um codigo textual completo, e nao como um numero fixo de 2 digitos.
+
+Ou seja:
+
+- nunca assumir que a cor sempre tera exatamente 2 caracteres
+- o parser precisa aceitar o ultimo bloco do SKU com tamanho variavel
+
+### Caso 1: cor com 2 digitos
+
+Exemplo:
+
+- `01-2504-22-01`
+
+Leitura:
+
+- `01` = unidade
+- `2504` = base
+- `22` = tamanho M
+- `01` = cor Preto
+
+Esse e o caso mais comum.
+
+### Caso 2: cor com 4 digitos
+
+Exemplo:
+
+- `01-2504-26-0619`
+
+Leitura:
+
+- `01` = unidade
+- `2504` = base
+- `26` = tamanho Unico
+- `0619` = cor expandida
+
+Nesse caso:
+
+- o codigo da cor nao e `06`
+- o codigo da cor e `0619` inteiro
+- nao deve ser quebrado em partes
+- o bloco final completo e a identidade da cor
+
+### Caso 3: cor com 6 digitos
+
+Exemplo:
+
+- `01-2504-26-010203`
+
+Leitura:
+
+- `01` = unidade
+- `2504` = base
+- `26` = tamanho Unico
+- `010203` = cor expandida/composta
+
+Nesse caso:
+
+- o bloco final inteiro e o codigo da cor
+- ele precisa ser preservado integralmente
+- nao pode ser truncado para `01`
+- nao pode ser tratado como 3 cores separadas, a menos que exista uma regra explicita de negocio para isso
+
+### Regra tecnica mais importante
+
+O SKU Pepper deve ser interpretado assim:
+
+- primeiro bloco = quantidade
+- segundo bloco = codigo base
+- penultimo bloco = tamanho
+- ultimo bloco = cor
+
+Isso vale mesmo quando a cor tiver:
+
+- 2 digitos
+- 4 digitos
+- 6 digitos
+
+Entao o parser correto e por posicao de bloco, nao por quantidade de caracteres no bloco da cor.
+
+### Exemplos corretos
+
+Exemplo 1:
+
+- `01-2504-22-01`
+- quantidade = `01`
+- base = `2504`
+- tamanho = `22`
+- cor = `01`
+
+Exemplo 2:
+
+- `01-2504-26-0619`
+- quantidade = `01`
+- base = `2504`
+- tamanho = `26`
+- cor = `0619`
+
+Exemplo 3:
+
+- `01-2504-26-042101`
+- quantidade = `01`
+- base = `2504`
+- tamanho = `26`
+- cor = `042101`
+
+### Como o sistema deve aplicar essa regra
+
+Ao receber um SKU:
+
+1. fazer split por hifen
+2. identificar os blocos
+3. se tiver 2 blocos:
+   - e pai
+4. se tiver 4 blocos:
+   - e filha
+5. ler:
+   - bloco 1 = quantidade
+   - bloco 2 = codigo base
+   - bloco 3 = tamanho
+   - bloco 4 = cor inteira, sem truncar
+
+### Pseudorregra
+
+SKU filha:
+
+`NN-CODIGOBASE-TT-CCVAR`
+
+Onde:
+
+- `CCVAR` pode ter 2, 4 ou 6 digitos
+
+### Erros que nao devem acontecer
+
+Nunca:
+
+- assumir que cor sempre tem 2 digitos
+- cortar o bloco final da cor para os 2 primeiros caracteres
+- quebrar a cor por tamanho de string
+- usar regex que force a cor final a ter tamanho fixo de 2
+
+### Forma correta de modelar
+
+Em qualquer sistema:
+
+- o campo da cor no SKU deve ser tratado como string
+- nao como inteiro fixo
+- e deve aceitar:
+  - 2 caracteres
+  - 4 caracteres
+  - 6 caracteres
+  - e, idealmente, ser preparado para expansao futura
+
+### Como aplicar em projetos
+
+Use esta logica:
+
+- produto pai: agrupamento principal
+- filhas: estoque e operacao
+- tamanho: sempre penultimo bloco
+- cor: sempre ultimo bloco inteiro
+- base Pepper de tamanho: usada para interpretar `TT`
+- base Pepper de cor: usada quando o codigo existir na tabela simples
+- se o codigo for expandido (4 ou 6 digitos), usar o valor integral como chave de cor
+
+### Recomendacao de implementacao
+
+Crie o sistema assim:
+
+- `quantityCode`
+- `baseCode`
+- `sizeCode`
+- `colorCode`
+
+E trate:
+
+- `sizeCode` como string curta
+- `colorCode` como string variavel
+
+Nunca use:
+
+- substring fixa para cor
+
+Use:
+
+- split por hifen e leitura posicional
+
 ## Exemplo pratico
 
 Pai:
@@ -248,6 +450,7 @@ Exemplos:
 
 - `01-2504` = pai
 - `01-2504-22-01` = filha
+- `01-1041-22-0281` = filha
 
 ## Como aplicar na operacao
 
@@ -263,7 +466,7 @@ Exemplos:
 1. pegar todas as filhas do pai
 2. ler o penultimo bloco como tamanho
 3. ler o ultimo bloco como cor
-4. converter os codigos usando a base Pepper
+4. converter os codigos usando a base Pepper quando houver mapeamento exato; se a cor for expandida, manter o codigo integral como chave
 5. montar:
    - linhas = cores
    - colunas = tamanhos

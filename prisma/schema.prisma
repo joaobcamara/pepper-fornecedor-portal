@@ -164,6 +164,24 @@ enum SupplierFinancialAttachmentKind {
   COMPROVANTE
 }
 
+enum WhatsAppShareOwnerRole {
+  ADMIN
+  SUPPLIER
+}
+
+enum WhatsAppShareStatus {
+  OPEN
+  APPROVED
+  CHANGES_REQUESTED
+  REJECTED
+  CLOSED
+}
+
+enum WhatsAppShareTemplate {
+  UNIQUE_COLOR_CARDS
+  SIZE_COLOR_GRID
+}
+
 model PepperSizeReference {
   code       String   @id
   label      String
@@ -234,6 +252,7 @@ model User {
   supplierFinancialAttachments SupplierFinancialAttachment[]
   supplierFinancialStatusHistory SupplierFinancialStatusHistory[]
   supplierOrderWorkflowHistory SupplierOrderWorkflowHistory[]
+  createdWhatsAppShareLinks WhatsAppShareLink[] @relation("CreatedWhatsAppShareLinks")
 }
 
 model Supplier {
@@ -261,11 +280,12 @@ model Supplier {
   replenishmentRequests ReplenishmentRequest[]
   supplierDailySales SupplierSalesMetricDaily[]
   onboardingItems CatalogOnboardingItem[]
-    pepperIaThreads PepperIaThread[]
-    suggestionValidationDrafts SuggestionValidationDraft[]
-    supplierOrders SupplierOrder[]
-    supplierFinancialEntries SupplierFinancialEntry[]
-  }
+  pepperIaThreads PepperIaThread[]
+  suggestionValidationDrafts SuggestionValidationDraft[]
+  supplierOrders SupplierOrder[]
+  supplierFinancialEntries SupplierFinancialEntry[]
+  whatsappShareLinks WhatsAppShareLink[]
+}
 
 model Customer {
   id                 String      @id @default(cuid())
@@ -1023,6 +1043,7 @@ model CatalogProduct {
   tinyMappings      CatalogTinyMapping[]
   supplierLinks     CatalogProductSupplier[]
   salesMetricsDaily ProductSalesMetricDaily[]
+  whatsappShareLinks WhatsAppShareLink[]
 
   @@index([baseCode])
   @@index([active])
@@ -1058,6 +1079,7 @@ model CatalogVariant {
   salesOrderItems   SalesOrderItem[]
   salesMetricsDaily VariantSalesMetricDaily[]
   supplierOrderItems SupplierOrderItem[]
+  whatsappShareItems WhatsAppShareLinkItem[]
 
   @@index([catalogProductId])
   @@index([sizeCode, colorCode])
@@ -1196,6 +1218,58 @@ model CatalogProductSupplier {
   supplier          Supplier       @relation(fields: [supplierId], references: [id])
 
   @@unique([catalogProductId, supplierId])
+}
+
+model WhatsAppShareLink {
+  id                 String                 @id @default(cuid())
+  slug               String                 @unique
+  ownerRole          WhatsAppShareOwnerRole
+  ownerUserId        String
+  supplierId         String?
+  catalogProductId   String
+  template           WhatsAppShareTemplate
+  status             WhatsAppShareStatus    @default(OPEN)
+  title              String
+  productName        String
+  productSku         String
+  imageUrl           String?
+  note               String?
+  originalNote       String?
+  statusNote         String?
+  viewedAt           DateTime?
+  lastRecipientEditAt DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  ownerUser          User                   @relation("CreatedWhatsAppShareLinks", fields: [ownerUserId], references: [id])
+  supplier           Supplier?              @relation(fields: [supplierId], references: [id])
+  catalogProduct     CatalogProduct         @relation(fields: [catalogProductId], references: [id])
+  items              WhatsAppShareLinkItem[]
+
+  @@index([ownerUserId, createdAt])
+  @@index([supplierId, createdAt])
+  @@index([catalogProductId, createdAt])
+  @@index([status, createdAt])
+}
+
+model WhatsAppShareLinkItem {
+  id                       String            @id @default(cuid())
+  shareLinkId              String
+  catalogVariantId         String?
+  sku                      String
+  sizeLabel                String
+  colorLabel               String
+  currentStockSnapshot     Int?
+  requestedQuantity        Int
+  originalRequestedQuantity Int
+  sortOrder                Int               @default(0)
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  shareLink                WhatsAppShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+  catalogVariant           CatalogVariant?   @relation(fields: [catalogVariantId], references: [id])
+
+  @@index([shareLinkId, sortOrder])
+  @@index([catalogVariantId])
+  @@index([sku])
 }
 
 model FoundationInboundEvent {

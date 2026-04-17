@@ -1,5 +1,6 @@
 import { InventorySyncStatus, type Prisma } from "@prisma/client";
 
+import { readPortalCatalogViewState } from "@/lib/foundation-portal-catalog-state";
 import { prisma } from "@/lib/prisma";
 import { getColorLabel, getParentSku, getSizeLabel, normalizeSku } from "@/lib/sku";
 import { getStockBand, resolveStockThresholds, type StockBand } from "@/lib/stock";
@@ -7,6 +8,7 @@ import { getStockBand, resolveStockThresholds, type StockBand } from "@/lib/stoc
 type FoundationCatalogLoadParams = {
   supplierId?: string;
   onlyActive?: boolean;
+  onlyPortalVisible?: boolean;
   catalogProductIds?: string[];
 };
 
@@ -56,6 +58,8 @@ export type FoundationCatalogProductRecord = {
   imageUrl: string | null;
   active: boolean;
   archivedAt: Date | null;
+  portalVisible: boolean;
+  portalArchivedAt: string | null;
   availableSizes: string[];
   availableColors: string[];
   supplierLinks: FoundationCatalogSupplierLink[];
@@ -209,7 +213,8 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
     ])
   );
 
-  return catalogProducts.map<FoundationCatalogProductRecord>((catalogProduct) => {
+  const foundationProducts = catalogProducts.map<FoundationCatalogProductRecord>((catalogProduct) => {
+    const portalCatalogView = readPortalCatalogViewState(catalogProduct.foundationMetadataJson);
     const parentSource = catalogProduct.sourceProductId
       ? sourceProductById.get(catalogProduct.sourceProductId) ?? null
       : null;
@@ -280,6 +285,8 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       }),
       active: catalogProduct.active,
       archivedAt: catalogProduct.archivedAt,
+      portalVisible: portalCatalogView.visible,
+      portalArchivedAt: portalCatalogView.archivedAt,
       availableSizes: variants.map((variant) => variant.sizeLabel),
       availableColors: variants.map((variant) => variant.colorLabel),
       supplierLinks: catalogProduct.supplierLinks.map((link) => ({
@@ -294,6 +301,8 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       lastUpdatedAt
     };
   });
+
+  return params.onlyPortalVisible ? foundationProducts.filter((product) => product.portalVisible) : foundationProducts;
 }
 
 export async function listFoundationCatalogProducts(params: FoundationCatalogLoadParams = {}) {

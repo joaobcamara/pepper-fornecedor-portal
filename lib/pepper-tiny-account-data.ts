@@ -5,6 +5,9 @@ export type PepperTinyAccountReferenceItem = {
   key: PepperTinyAccountKey;
   label: string;
   role: PepperTinyAccountRole;
+  tinyPlanName: "Evoluir" | "Potencializar";
+  tinyApiCallsPerMinute: number;
+  tinyRecommendedTargetCallsPerMinute: number;
   sortOrder: number;
   active: boolean;
   sharesGroupStock: boolean;
@@ -20,6 +23,9 @@ export const PEPPER_TINY_ACCOUNT_REFERENCES: PepperTinyAccountReferenceItem[] = 
     key: "pepper",
     label: "Pepper",
     role: "MATRIX",
+    tinyPlanName: "Potencializar",
+    tinyApiCallsPerMinute: 120,
+    tinyRecommendedTargetCallsPerMinute: 90,
     sortOrder: 10,
     active: true,
     sharesGroupStock: true,
@@ -33,6 +39,9 @@ export const PEPPER_TINY_ACCOUNT_REFERENCES: PepperTinyAccountReferenceItem[] = 
     key: "showlook",
     label: "Show Look",
     role: "DEPENDENT",
+    tinyPlanName: "Evoluir",
+    tinyApiCallsPerMinute: 60,
+    tinyRecommendedTargetCallsPerMinute: 45,
     sortOrder: 20,
     active: true,
     sharesGroupStock: true,
@@ -46,6 +55,9 @@ export const PEPPER_TINY_ACCOUNT_REFERENCES: PepperTinyAccountReferenceItem[] = 
     key: "onshop",
     label: "On Shop",
     role: "DEPENDENT",
+    tinyPlanName: "Evoluir",
+    tinyApiCallsPerMinute: 60,
+    tinyRecommendedTargetCallsPerMinute: 45,
     sortOrder: 30,
     active: true,
     sharesGroupStock: true,
@@ -57,10 +69,24 @@ export const PEPPER_TINY_ACCOUNT_REFERENCES: PepperTinyAccountReferenceItem[] = 
   }
 ];
 
+export function getPepperTinyAccountReference(accountKey: PepperTinyAccountKey) {
+  return PEPPER_TINY_ACCOUNT_REFERENCES.find((item) => item.key === accountKey);
+}
+
 export function getPepperTinyAccountLabel(accountKey: PepperTinyAccountKey) {
-  return (
-    PEPPER_TINY_ACCOUNT_REFERENCES.find((item) => item.key === accountKey)?.label ?? accountKey
-  );
+  return getPepperTinyAccountReference(accountKey)?.label ?? accountKey;
+}
+
+export function getPepperTinyAccountPlanName(accountKey: PepperTinyAccountKey) {
+  return getPepperTinyAccountReference(accountKey)?.tinyPlanName ?? "Evoluir";
+}
+
+export function getPepperTinyPlanCallsPerMinute(accountKey: PepperTinyAccountKey) {
+  return getPepperTinyAccountReference(accountKey)?.tinyApiCallsPerMinute ?? 60;
+}
+
+export function getPepperTinyRecommendedTargetCallsPerMinute(accountKey: PepperTinyAccountKey) {
+  return getPepperTinyAccountReference(accountKey)?.tinyRecommendedTargetCallsPerMinute ?? 45;
 }
 
 export function getPepperCatalogImportAccountKey(): PepperTinyAccountKey {

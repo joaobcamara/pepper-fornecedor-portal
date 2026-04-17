@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createLocalReplenishmentRequest, getLocalSupplierDirectory } from "@/lib/local-operations-store";
-import { buildPurchaseOrderHtml } from "@/lib/order-html";
+import { buildPurchaseOrderHtml } from "@/lib/order-html-shared";
 import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import { getCurrentSession } from "@/lib/session";

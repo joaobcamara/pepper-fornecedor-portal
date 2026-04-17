@@ -87,9 +87,10 @@ npm.cmd run dev
 ### Admin
 
 - `/admin`
+- `/admin/estoque`
 - `/admin/produtos`
 - `/admin/financeiro`
-- `/admin/importacao-tiny`
+- `/admin/whatsapp`
 - `/admin/sugestoes-produto`
 - `/admin/solicitacoes-reposicao`
 - `/admin/pedidos-fornecedor`
@@ -128,6 +129,9 @@ npm.cmd run dev
 ## Documentacao complementar
 
 - veja `docs/project-status.md` para o status consolidado do MVP
+- veja `docs/final-homologation-checklist.md` para a regua final de homologacao antes do deploy
+- veja `docs/foundation-staged-import-manual.md` para a regra oficial de importacao em etapas de familias grandes
+- veja `docs/foundation-navigation-map.md` para o mapa vivo da fundacao, com dominios, caminhos e formas de uso
 - veja `docs/architecture-review.md` para a consolidacao tecnica do portal atual
 - veja `docs/render-deploy.md` para o passo a passo de deploy em GitHub + Render + Supabase
 - veja `docs/supabase-catalog.md` para a arquitetura do catalogo e da camada de IA

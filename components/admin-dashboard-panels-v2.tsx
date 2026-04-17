@@ -1,6 +1,6 @@
 ﻿import Image from "next/image";
 import Link from "next/link";
-import { AlertCircle, ArrowRight, Boxes, DownloadCloud, MessageCircle, RefreshCcw, ShoppingCart, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowRight, Boxes, MessageCircle, RefreshCcw, Send, ShoppingCart, Sparkles, Warehouse } from "lucide-react";
 import { OperationsFlowPanel } from "@/components/operations-flow-panel";
 import { StatusPill } from "@/components/status-pill";
 import {
@@ -56,15 +56,15 @@ export function AdminOverviewCardsV2({
 export function AdminQuickLinksV2() {
   const links = [
     {
-      href: "/admin/importacao-tiny",
-      title: "Importar do Tiny",
-      description: "Buscar SKU, revisar pai e filhas e salvar no sistema.",
-      icon: DownloadCloud
+      href: "/admin/estoque",
+      title: "Dashboard de estoque",
+      description: "Acompanhar top 10, criticidade, cobertura e itens stale direto da fundacao.",
+      icon: Warehouse
     },
     {
       href: "/admin/produtos",
       title: "Gerenciar produtos",
-      description: "Editar nome interno, status ativo e vinculos com fornecedores.",
+      description: "Buscar no portal, importar do Tiny sob demanda e controlar o card do portal.",
       icon: Boxes
     },
     {
@@ -86,6 +86,12 @@ export function AdminQuickLinksV2() {
       icon: MessageCircle
     },
     {
+      href: "/admin/whatsapp",
+      title: "WhatsApp",
+      description: "Gerenciar links compartilhaveis criados pelo admin com aprovacao, recusa e fechamento.",
+      icon: Send
+    },
+    {
       href: "/admin/solicitacoes-reposicao",
       title: "Solicitacoes de reposicao",
       description: "Aprovar ou recusar as sugestoes de compra enviadas pelos fornecedores.",
@@ -94,7 +100,7 @@ export function AdminQuickLinksV2() {
   ];
 
   return (
-    <section className="grid gap-4 xl:grid-cols-6">
+    <section className="grid gap-4 xl:grid-cols-7">
       {links.map((item) => {
         const Icon = item.icon;
 

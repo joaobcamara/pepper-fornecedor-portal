@@ -32,19 +32,26 @@ export async function getPepperFoundationMultiAccountSnapshot(): Promise<PepperF
   return {
     accounts:
       accounts.length > 0
-        ? accounts.map((item) => ({
-            key: item.key as PepperTinyAccountReferenceItem["key"],
-            label: item.label,
-            role: item.role,
-            sortOrder: item.sortOrder,
-            active: item.active,
-            sharesGroupStock: item.sharesGroupStock,
-            readsAvailableMultiCompany: item.readsAvailableMultiCompany,
-            handlesCatalogImport: item.handlesCatalogImport,
-            handlesPhysicalStock: item.handlesPhysicalStock,
-            zeroBalanceOnCount: item.zeroBalanceOnCount,
-            salesAffectSharedStock: item.salesAffectSharedStock
-          }))
+        ? accounts.map((item) => {
+            const fallback =
+              PEPPER_TINY_ACCOUNT_REFERENCES.find((reference) => reference.key === item.key) ??
+              PEPPER_TINY_ACCOUNT_REFERENCES[0];
+
+            return {
+              ...fallback,
+              key: item.key as PepperTinyAccountReferenceItem["key"],
+              label: item.label,
+              role: item.role,
+              sortOrder: item.sortOrder,
+              active: item.active,
+              sharesGroupStock: item.sharesGroupStock,
+              readsAvailableMultiCompany: item.readsAvailableMultiCompany,
+              handlesCatalogImport: item.handlesCatalogImport,
+              handlesPhysicalStock: item.handlesPhysicalStock,
+              zeroBalanceOnCount: item.zeroBalanceOnCount,
+              salesAffectSharedStock: item.salesAffectSharedStock
+            };
+          })
         : PEPPER_TINY_ACCOUNT_REFERENCES,
     matrixAccountKey: "pepper",
     catalogImportAccountKey: "pepper",

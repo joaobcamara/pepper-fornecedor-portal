@@ -27,10 +27,25 @@ Definir a configuracao correta dos webhooks das 3 contas Tiny para a fundacao Gr
 - `POST /api/tiny/webhooks/orders`
 - `POST /api/tiny/webhooks/stock`
 
+## Rotas curtas por conta
+
+Para contas que apresentarem instabilidade ao salvar URL longa com `account=...`,
+usar as rotas curtas dedicadas por conta:
+
+- `POST /api/tiny/webhooks/pepper/sales`
+- `POST /api/tiny/webhooks/pepper/orders`
+- `POST /api/tiny/webhooks/showlook/sales`
+- `POST /api/tiny/webhooks/showlook/orders`
+- `POST /api/tiny/webhooks/onshop/sales`
+- `POST /api/tiny/webhooks/onshop/orders`
+
 ### Observacao
 
 `/api/tiny/webhooks/orders` e um alias semantico da mesma camada de pedido/venda.  
 Ele existe para facilitar a configuracao no Tiny quando o painel separar "vendas" de "pedidos enviados".
+
+As rotas curtas acima existem para reduzir o tamanho da URL e evitar depender do
+parametro `account` na query string.
 
 ## Host atual
 
@@ -55,22 +70,40 @@ Como o painel do Tiny mostrado hoje trabalha com URL simples, este e o formato r
 Configurar nas 3 contas:
 
 - Pepper:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=pepper&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/pepper/sales?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=pepper&secret=<TINY_WEBHOOK_SECRET>`
 - Show Look:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=showlook&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/showlook/sales?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=showlook&secret=<TINY_WEBHOOK_SECRET>`
 - On Shop:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=onshop&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/onshop/sales?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/sales?account=onshop&secret=<TINY_WEBHOOK_SECRET>`
 
 ### 2. Receber notificacoes de pedidos enviados
 
 Configurar nas 3 contas:
 
 - Pepper:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=pepper&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/pepper/orders?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=pepper&secret=<TINY_WEBHOOK_SECRET>`
 - Show Look:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=showlook&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/showlook/orders?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=showlook&secret=<TINY_WEBHOOK_SECRET>`
 - On Shop:
-  - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=onshop&secret=<TINY_WEBHOOK_SECRET>`
+  - preferencial curto:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/onshop/orders?secret=<TINY_WEBHOOK_SECRET>`
+  - compatibilidade:
+    - `https://fornecedor-portal.onrender.com/api/tiny/webhooks/orders?account=onshop&secret=<TINY_WEBHOOK_SECRET>`
 
 ### 3. Receber notificacoes de lancamentos de estoque
 

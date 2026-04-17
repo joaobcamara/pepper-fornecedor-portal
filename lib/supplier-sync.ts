@@ -37,7 +37,8 @@ export async function syncSupplierInventory(params: {
 
   const foundationProducts = await listFoundationCatalogProducts({
     supplierId: params.supplierId,
-    onlyActive: true
+    onlyActive: true,
+    onlyPortalVisible: true
   });
 
   const variants = foundationProducts.flatMap((product) => product.variants);

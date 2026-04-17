@@ -315,6 +315,86 @@ async function runSmoke() {
 
     log("[OK] Admin autenticado abriu /admin/sincronizacoes com painel da fundacao");
 
+    const stockPage = await request("/admin/estoque", {
+      headers: { Cookie: adminCookie }
+    });
+
+    if (stockPage.status !== 200) {
+      fail(`Admin autenticado respondeu ${stockPage.status} em /admin/estoque.`);
+    }
+
+    if (!/Dashboard exclusivo de estoque|Estoque/i.test(stockPage.text)) {
+      fail("Painel de estoque nao exibiu o conteudo esperado.");
+    }
+
+    log("[OK] Admin autenticado abriu /admin/estoque");
+
+    const whatsappPage = await request("/admin/whatsapp", {
+      headers: { Cookie: adminCookie }
+    });
+
+    if (whatsappPage.status !== 200) {
+      fail(`Admin autenticado respondeu ${whatsappPage.status} em /admin/whatsapp.`);
+    }
+
+    if (!/Links portateis compartilhados pelo admin|WhatsApp/i.test(whatsappPage.text)) {
+      fail("Central de WhatsApp nao exibiu o conteudo esperado.");
+    }
+
+    log("[OK] Admin autenticado abriu /admin/whatsapp");
+
+    const shortWebhookRoutes = [
+      "/api/tiny/webhooks/pepper/sales",
+      "/api/tiny/webhooks/pepper/orders",
+      "/api/tiny/webhooks/showlook/sales",
+      "/api/tiny/webhooks/showlook/orders"
+    ];
+
+    for (const routePath of shortWebhookRoutes) {
+      const shortWebhookPage = await request(routePath);
+
+      if (shortWebhookPage.status !== 200) {
+        fail(`Rota curta de webhook respondeu ${shortWebhookPage.status} em ${routePath}.`);
+      }
+    }
+
+    log("[OK] Rotas curtas de webhook para Pepper e Show Look estao ativas");
+
+    const adminFinancePage = await request("/admin/financeiro", {
+      headers: { Cookie: adminCookie }
+    });
+
+    if (adminFinancePage.status !== 200) {
+      fail(`Admin autenticado respondeu ${adminFinancePage.status} em /admin/financeiro.`);
+    }
+
+    log("[OK] Admin autenticado abriu /admin/financeiro");
+
+    const adminMessagesPage = await request("/admin/conversas", {
+      headers: { Cookie: adminCookie }
+    });
+
+    if (adminMessagesPage.status !== 200) {
+      fail(`Admin autenticado respondeu ${adminMessagesPage.status} em /admin/conversas.`);
+    }
+
+    log("[OK] Admin autenticado abriu /admin/conversas");
+
+    const legacyImportPage = await request("/admin/importacao-tiny", {
+      headers: { Cookie: adminCookie },
+      redirect: "manual"
+    });
+
+    if (legacyImportPage.status < 300 || legacyImportPage.status >= 400) {
+      fail(`Rota legada /admin/importacao-tiny deveria redirecionar, mas respondeu ${legacyImportPage.status}.`);
+    }
+
+    if (!legacyImportPage.headers.location?.includes("/admin/produtos")) {
+      fail("Rota legada /admin/importacao-tiny nao redirecionou para /admin/produtos.");
+    }
+
+    log("[OK] Rota legada /admin/importacao-tiny redireciona para /admin/produtos");
+
     const supplierPage = await request("/produtos", {
       headers: { Cookie: supplierCookie }
     });
@@ -325,10 +405,168 @@ async function runSmoke() {
 
     log("[OK] Fornecedor autenticado abriu /produtos");
 
+    const supplierDashboardPage = await request("/dashboard", {
+      headers: { Cookie: supplierCookie }
+    });
+
+    if (supplierDashboardPage.status !== 200) {
+      fail(`Fornecedor autenticado respondeu ${supplierDashboardPage.status} em /dashboard.`);
+    }
+
+    log("[OK] Fornecedor autenticado abriu /dashboard");
+
+    const supplierFinancePage = await request("/financeiro", {
+      headers: { Cookie: supplierCookie }
+    });
+
+    if (supplierFinancePage.status !== 200) {
+      fail(`Fornecedor autenticado respondeu ${supplierFinancePage.status} em /financeiro.`);
+    }
+
+    log("[OK] Fornecedor autenticado abriu /financeiro");
+
+    const supplierMessagesPage = await request("/mensagens", {
+      headers: { Cookie: supplierCookie }
+    });
+
+    if (supplierMessagesPage.status !== 200) {
+      fail(`Fornecedor autenticado respondeu ${supplierMessagesPage.status} em /mensagens.`);
+    }
+
+    log("[OK] Fornecedor autenticado abriu /mensagens");
+
+    const supplierSuggestionPage = await request("/sugestao-produto", {
+      headers: { Cookie: supplierCookie }
+    });
+
+    if (supplierSuggestionPage.status !== 200) {
+      fail(`Fornecedor autenticado respondeu ${supplierSuggestionPage.status} em /sugestao-produto.`);
+    }
+
+    log("[OK] Fornecedor autenticado abriu /sugestao-produto");
+
+    const supplierOrdersPage = await request("/pedidos-recebidos", {
+      headers: { Cookie: supplierCookie }
+    });
+
+    if (supplierOrdersPage.status !== 200) {
+      fail(`Fornecedor autenticado respondeu ${supplierOrdersPage.status} em /pedidos-recebidos.`);
+    }
+
+    log("[OK] Fornecedor autenticado abriu /pedidos-recebidos");
+
     const activeSupplier = await resolveActiveSupplier();
     log(`[OK] Smoke usando fornecedor ativo ${activeSupplier.name}`);
     const smokeProduct = await resolveSmokeCatalogProduct(activeSupplier.id);
     log(`[OK] Smoke usando produto base ${smokeProduct.skuParent}`);
+    const smokeVariants = smokeProduct.variants.slice(0, 2).map((variant) => ({
+      catalogVariantId: variant.id,
+      sku: variant.sku,
+      productName: smokeProduct.name,
+      color: variant.colorLabel ?? "",
+      size: variant.sizeLabel ?? "",
+      currentStock: variant.inventory?.availableMultiCompanyStock ?? null,
+      requestedQuantity: 1,
+      unitCost: Number(variant.costPrice ?? 0)
+    }));
+
+    const htmlExport = await request("/api/admin/purchase-order/html", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: adminCookie
+      },
+      body: JSON.stringify({
+        supplierName: activeSupplier.name,
+        productName: smokeProduct.name,
+        productSku: smokeProduct.skuParent,
+        imageUrl: smokeProduct.mainImageUrl ?? null,
+        note: "Smoke check automatico",
+        variants: smokeVariants.map((item) => ({
+          sku: item.sku,
+          size: item.size,
+          color: item.color,
+          currentStock: item.currentStock,
+          requestedQuantity: item.requestedQuantity
+        }))
+      })
+    });
+
+    const htmlExportPayload = parseJson("html pedido admin", htmlExport.text);
+
+    if (
+      htmlExport.status !== 200 ||
+      typeof htmlExportPayload.html !== "string" ||
+      !htmlExportPayload.html.includes("data:image") ||
+      !htmlExportPayload.html.includes(smokeProduct.name)
+    ) {
+      fail(`HTML do pedido nao foi gerado como esperado: ${htmlExport.text.slice(0, 320)}`);
+    }
+
+    log("[OK] HTML do pedido admin foi gerado com imagens embarcadas");
+
+    let whatsappShareLinkId = null;
+
+    try {
+      const whatsappShare = await request("/api/whatsapp-links", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: adminCookie
+        },
+        body: JSON.stringify({
+          supplierId: activeSupplier.id,
+          productSku: smokeProduct.skuParent,
+          productName: smokeProduct.name,
+          imageUrl: smokeProduct.mainImageUrl ?? null,
+          note: "Smoke check automatico",
+          items: smokeVariants.map((item) => ({
+            sku: item.sku,
+            size: item.size,
+            color: item.color,
+            currentStock: item.currentStock,
+            requestedQuantity: item.requestedQuantity
+          }))
+        })
+      });
+
+      const whatsappSharePayload = parseJson("whatsapp share", whatsappShare.text);
+
+      if (
+        whatsappShare.status !== 200 ||
+        typeof whatsappSharePayload.id !== "string" ||
+        typeof whatsappSharePayload.shareUrl !== "string" ||
+        !whatsappSharePayload.shareUrl.includes("/whatsapp/")
+      ) {
+        fail(`Link do WhatsApp nao foi criado como esperado: ${whatsappShare.text.slice(0, 320)}`);
+      }
+
+      whatsappShareLinkId = whatsappSharePayload.id;
+      const shareUrl = new URL(whatsappSharePayload.shareUrl);
+      const whatsappSharePage = await request(shareUrl.pathname, {
+        headers: {
+          Cookie: adminCookie
+        }
+      });
+
+      if (
+        whatsappSharePage.status !== 200 ||
+        !whatsappSharePage.text.includes(smokeProduct.name) ||
+        !whatsappSharePage.text.includes(smokeProduct.skuParent)
+      ) {
+        fail("Pagina publica do link WhatsApp nao abriu com o conteudo esperado.");
+      }
+
+      log("[OK] Link publico do WhatsApp abriu com leitura viva da fundacao");
+    } finally {
+      if (whatsappShareLinkId) {
+        await prisma.whatsAppShareLink.delete({
+          where: {
+            id: whatsappShareLinkId
+          }
+        }).catch(() => undefined);
+      }
+    }
 
     const inspect2504 = await request("/api/admin/tiny/inspect", {
       method: "POST",
@@ -541,14 +779,14 @@ async function runSmoke() {
         productSku: smokeProduct.skuParent,
         imageUrl: smokeProduct.mainImageUrl ?? null,
         adminNote: "Smoke check automatico",
-        items: smokeProduct.variants.slice(0, 2).map((variant) => ({
-          catalogVariantId: variant.id,
+        items: smokeVariants.map((variant) => ({
+          catalogVariantId: variant.catalogVariantId,
           sku: variant.sku,
           productName: smokeProduct.name,
-          color: variant.colorLabel ?? "",
-          size: variant.sizeLabel ?? "",
-          requestedQuantity: 1,
-          unitCost: Number(variant.costPrice ?? 0)
+          color: variant.color,
+          size: variant.size,
+          requestedQuantity: variant.requestedQuantity,
+          unitCost: variant.unitCost
         }))
       })
     });

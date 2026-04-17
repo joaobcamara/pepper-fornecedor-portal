@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Boxes, Building2, DownloadCloud, LayoutDashboard, MessageCircle, PackageCheck, RefreshCcw, ShoppingCart, Sparkles, Users, Wallet } from "lucide-react";
+import { Boxes, Building2, LayoutDashboard, MessageCircle, PackageCheck, RefreshCcw, Send, ShoppingCart, Sparkles, Users, Wallet, Warehouse } from "lucide-react";
 import { LogoutButton } from "@/components/logout-button";
 import { LogoMark } from "@/components/logo-mark";
 import { PepperIaBubbleSlot, type PepperIaBubblePageKey } from "@/components/pepper-ia-bubble-slot";
@@ -7,10 +7,11 @@ import { cn } from "@/lib/cn";
 
 const navItems = [
   { href: "/admin", label: "Dashboard Admin", icon: LayoutDashboard },
+  { href: "/admin/estoque", label: "Estoque", icon: Warehouse },
   { href: "/admin/produtos", label: "Produtos", icon: Boxes },
-  { href: "/admin/importacao-tiny", label: "Importacao Tiny", icon: DownloadCloud },
   { href: "/admin/sugestoes-produto", label: "Sugestoes de Produto", icon: Sparkles },
   { href: "/admin/financeiro", label: "Financeiro", icon: Wallet },
+  { href: "/admin/whatsapp", label: "WhatsApp", icon: Send },
   { href: "/admin/conversas", label: "Conversas", icon: MessageCircle },
   { href: "/admin/solicitacoes-reposicao", label: "Solicitacoes de reposicao", icon: ShoppingCart },
   { href: "/admin/pedidos-fornecedor", label: "Pedidos ao Fornecedor", icon: PackageCheck },

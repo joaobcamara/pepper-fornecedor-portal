@@ -89,10 +89,18 @@ printSection("Arquivos estruturais");
 });
 
 printSection("Workspace git");
-const gitStatus = spawnSync("git", ["status", "--short"], {
+let gitStatus = spawnSync("git", ["status", "--short"], {
   cwd: root,
   encoding: "utf8"
 });
+
+if (gitStatus.status !== 0) {
+  gitStatus = spawnSync("cmd", ["/c", "git", "status", "--short"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+}
+
 if (gitStatus.status === 0) {
   const lines = gitStatus.stdout.split(/\r?\n/).filter(Boolean);
   if (lines.length === 0) {

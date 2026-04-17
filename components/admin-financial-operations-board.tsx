@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, LoaderCircle, UploadCloud, Wallet, X } from "lucide-react";
+import { CheckCircle2, Download, LoaderCircle, MessageCircle, UploadCloud, Wallet, X } from "lucide-react";
+import { downloadHtmlFile, openWhatsAppShare } from "@/lib/browser-share";
 import { cn } from "@/lib/cn";
 import type { AdminFinancialBoardEntry } from "@/lib/supplier-financial-shared";
 import { getSupplierFinancialNextStep, getSupplierFinancialStatusTone } from "@/lib/operations-workflow";
@@ -12,6 +13,15 @@ const ADMIN_FINANCIAL_FLASH_KEY = "admin-financial:flash";
 
 function currency(value: number) {
   return `R$ ${value.toFixed(2).replace(".", ",")}`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinancialBoardEntry[] }) {
@@ -107,6 +117,119 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
     setComprovanteFile(null);
     setFeedback(null);
     setError(null);
+  }
+
+  function buildFinancialHtml(entry: AdminFinancialBoardEntry) {
+    const rows = entry.items
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(item.color)}</td>
+            <td>${escapeHtml(item.size)}</td>
+            <td>${escapeHtml(item.sku)}</td>
+            <td>${item.requestedQuantity}</td>
+            <td>${item.fulfilledQuantity}</td>
+            <td>${currency(item.confirmedTotalCost)}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    return `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8" />
+          <title>Financeiro - ${escapeHtml(entry.orderNumber)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #1f2937; margin: 32px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 24px; padding: 24px; background: #fff; margin-bottom: 24px; }
+            .badge { display: inline-block; background: #eef2ff; color: #4338ca; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border-bottom: 1px solid #e5e7eb; padding: 12px 10px; text-align: left; }
+            th { background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <span class="badge">Financeiro</span>
+            <h1>${escapeHtml(entry.productName)}</h1>
+            <p><strong>Fornecedor:</strong> ${escapeHtml(entry.supplierName)}</p>
+            <p><strong>Pedido:</strong> ${escapeHtml(entry.orderNumber)}</p>
+            <p><strong>SKU pai:</strong> ${escapeHtml(entry.productSku)}</p>
+            <p><strong>Status:</strong> ${escapeHtml(entry.statusLabel)}</p>
+            <p><strong>Valor:</strong> ${escapeHtml(entry.amountLabel)}</p>
+            ${entry.dueDate ? `<p><strong>Vencimento:</strong> ${escapeHtml(entry.dueDate)}</p>` : ""}
+            ${entry.note ? `<p><strong>Observacao:</strong> ${escapeHtml(entry.note)}</p>` : ""}
+          </div>
+
+          <div class="card">
+            <h2>Itens do card financeiro</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Cor</th>
+                  <th>Tamanho</th>
+                  <th>SKU</th>
+                  <th>Solicitado</th>
+                  <th>Separado</th>
+                  <th>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+    `.trim();
+  }
+
+  function downloadFinancialSnapshot() {
+    if (!selectedEntry) {
+      return;
+    }
+
+    downloadHtmlFile(`financeiro-${selectedEntry.orderNumber.replaceAll("/", "-")}.html`, buildFinancialHtml(selectedEntry));
+    setFeedback("Arquivo financeiro gerado para download.");
+  }
+
+  function shareFinancialSnapshotOnWhatsApp() {
+    if (!selectedEntry) {
+      return;
+    }
+
+    const lines = [
+      "Resumo financeiro - Grupo Pepper",
+      `Fornecedor: ${selectedEntry.supplierName}`,
+      `Pedido: ${selectedEntry.orderNumber}`,
+      `Produto: ${selectedEntry.productName}`,
+      `SKU pai: ${selectedEntry.productSku}`,
+      `Status: ${selectedEntry.statusLabel}`,
+      `Valor: ${selectedEntry.amountLabel}`
+    ];
+
+    if (selectedEntry.dueDate) {
+      lines.push(`Vencimento: ${selectedEntry.dueDate}`);
+    }
+
+    lines.push("", "Itens:");
+
+    for (const item of selectedEntry.items) {
+      lines.push(
+        `- ${item.color} / ${item.size} | SKU ${item.sku} | solicitado ${item.requestedQuantity} | separado ${item.fulfilledQuantity} | valor ${currency(item.confirmedTotalCost)}`
+      );
+    }
+
+    if (selectedEntry.note) {
+      lines.push("", `Observacao: ${selectedEntry.note}`);
+    }
+
+    lines.push("", "Arquivo HTML pode ser baixado no portal para envio formal.");
+
+    openWhatsAppShare(lines.join("\n"));
+    setFeedback("Resumo financeiro pronto para envio no WhatsApp.");
   }
 
   return (
@@ -321,6 +444,25 @@ export function AdminFinancialOperationsBoard({ entries }: { entries: AdminFinan
 
                 {feedback ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{feedback}</div> : null}
                 {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={shareFinancialSnapshotOnWhatsApp}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    WhatsApp
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadFinancialSnapshot}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                  >
+                    <Download className="h-4 w-4" />
+                    Baixar arquivo
+                  </button>
+                </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button

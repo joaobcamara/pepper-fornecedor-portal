@@ -69,8 +69,8 @@ export function getColorLabel(code?: string | null) {
   if (!code) {
     return "Sem cor";
   }
-
-  return COLOR_MAP[code] ?? code;
+  const normalized = normalizeSku(code);
+  return COLOR_MAP[normalized] ?? normalized;
 }
 
 export function formatVariantLabel(color?: string | null, size?: string | null) {
