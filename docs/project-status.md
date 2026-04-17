@@ -71,6 +71,7 @@ Ja concluido:
 - fundacao separada para persistir `sales` e `orders` como webhooks distintos em observabilidade
 - eventos organicos de `sales` ja observados no Supabase para Show Look e On Shop em 2026-04-17
 - eventos organicos de `stock` ja observados na Pepper em 2026-04-17
+- leitura do portal endurecida para ignorar estoque legado sem origem auditavel e priorizar somente saldo multiempresa confiavel
 
 ## Compatibilidade
 

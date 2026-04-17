@@ -7,6 +7,7 @@ import {
   type Prisma
 } from "@prisma/client";
 
+import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
 import { prisma } from "@/lib/prisma";
 import { normalizeSku } from "@/lib/sku";
@@ -370,7 +371,7 @@ export async function createWhatsAppShareLink(params: CreateWhatsAppShareLinkPar
             sku: item.sku,
             sizeLabel: item.size,
             colorLabel: item.color,
-            currentStockSnapshot: variant?.inventory?.availableMultiCompanyStock ?? item.currentStock ?? null,
+            currentStockSnapshot: getTrustedFoundationInventoryQuantity(variant?.inventory) ?? item.currentStock ?? null,
             requestedQuantity: item.requestedQuantity,
             originalRequestedQuantity: item.requestedQuantity,
             sortOrder: index

@@ -247,8 +247,7 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
       sizeLabel: getSizeLabel(variant.sizeCode),
       availableSizes,
       availableColors,
-        availableMultiCompanyStock:
-        latestInventory?.quantity ?? variant.fallbackInventory ?? null
+      availableMultiCompanyStock: null
     });
 
     const existingCatalogVariant = await db.catalogVariant.findFirst({
@@ -302,21 +301,25 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
         catalogVariantId: catalogVariant.id
       },
       update: {
-        availableMultiCompanyStock:
-          latestInventory?.quantity ?? variant.fallbackInventory ?? null,
-        stockStatus: latestInventory?.stockBand ?? "not_imported",
-        inventorySyncStatus: latestInventory?.status ?? "STALE",
-        lastStockSyncAt: latestInventory?.syncedAt ?? variant.lastSyncedAt,
-        source: "tiny"
+        availableMultiCompanyStock: null,
+        stockStatus: "not_imported",
+        inventorySyncStatus: "STALE",
+        lastStockSyncAt: null,
+        source: "foundation_pending_reconcile",
+        sourceAccountKey: null,
+        lastReconciledTinyId: null,
+        rawPayload: null
       },
       create: {
         catalogVariantId: catalogVariant.id,
-        availableMultiCompanyStock:
-          latestInventory?.quantity ?? variant.fallbackInventory ?? null,
-        stockStatus: latestInventory?.stockBand ?? "not_imported",
-        inventorySyncStatus: latestInventory?.status ?? "STALE",
-        lastStockSyncAt: latestInventory?.syncedAt ?? variant.lastSyncedAt,
-        source: "tiny"
+        availableMultiCompanyStock: null,
+        stockStatus: "not_imported",
+        inventorySyncStatus: "STALE",
+        lastStockSyncAt: null,
+        source: "foundation_pending_reconcile",
+        sourceAccountKey: null,
+        lastReconciledTinyId: null,
+        rawPayload: null
       }
     });
 

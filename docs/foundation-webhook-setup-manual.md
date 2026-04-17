@@ -130,6 +130,7 @@ Isso significa:
 - webhook de estoque nao aplica delta cego na fundacao
 - a fundacao usa a conta de origem e o SKU/ID recebidos para reconsultar o saldo atualizado no Tiny
 - o valor persistido em `CatalogInventory` passa a ser sempre o saldo multiempresa reconsultado
+- `CatalogVariantAccountState` passa a registrar o retrato por conta a cada reconciliacao valida
 - se o evento vier de `Show Look` ou `On Shop` sem contexto comercial, ele continua sendo marcado como `anomalia`, mas a reconciliacao do saldo acontece do mesmo jeito
 
 ### 4. Receber notificacoes de notas fiscais autorizadas

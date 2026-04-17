@@ -1,5 +1,10 @@
 import { InventorySyncStatus, type Prisma } from "@prisma/client";
 
+import {
+  getTrustedFoundationInventoryLastSyncAt,
+  getTrustedFoundationInventoryQuantity,
+  getTrustedFoundationInventorySyncStatus
+} from "@/lib/foundation-inventory";
 import { readPortalCatalogViewState } from "@/lib/foundation-portal-catalog-state";
 import { prisma } from "@/lib/prisma";
 import { getColorLabel, getParentSku, getSizeLabel, normalizeSku } from "@/lib/sku";
@@ -47,7 +52,6 @@ export type FoundationCatalogVariantRecord = {
   band: StockBand;
   sourceSyncStatus: InventorySyncStatus | null;
   sourceLastSyncedAt: Date | null;
-  sourceFallbackInventory: number | null;
 };
 
 export type FoundationCatalogProductRecord = {
@@ -77,7 +81,6 @@ type SourceProductRecord = {
   lowStockThreshold: number | null;
   syncStatus: InventorySyncStatus;
   lastSyncedAt: Date | null;
-  fallbackInventory: number | null;
 };
 
 function getCatalogImageUrl(params: {
@@ -192,8 +195,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
           criticalStockThreshold: true,
           lowStockThreshold: true,
           syncStatus: true,
-          lastSyncedAt: true,
-          fallbackInventory: true
+          lastSyncedAt: true
         }
       })
     : [];
@@ -207,8 +209,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         criticalStockThreshold: product.criticalStockThreshold,
         lowStockThreshold: product.lowStockThreshold,
         syncStatus: product.syncStatus,
-        lastSyncedAt: product.lastSyncedAt,
-        fallbackInventory: product.fallbackInventory
+        lastSyncedAt: product.lastSyncedAt
       }
     ])
   );
@@ -227,8 +228,13 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         parentCritical: parentSource?.criticalStockThreshold ?? null,
         parentLow: parentSource?.lowStockThreshold ?? null
       });
-      const quantity = variant.inventory?.availableMultiCompanyStock ?? sourceProduct?.fallbackInventory ?? null;
+      const quantity = getTrustedFoundationInventoryQuantity(variant.inventory);
       const band = getStockBand(quantity, thresholds);
+      const inventorySyncStatus = getTrustedFoundationInventorySyncStatus(
+        variant.inventory,
+        sourceProduct?.syncStatus ?? InventorySyncStatus.STALE
+      );
+      const lastStockSyncAt = getTrustedFoundationInventoryLastSyncAt(variant.inventory);
 
       return {
         id: variant.id,
@@ -241,8 +247,8 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         colorLabel: variant.colorLabel ?? getColorLabel(variant.colorCode),
         quantity,
         stockStatus: variant.inventory?.stockStatus ?? null,
-        inventorySyncStatus: variant.inventory?.inventorySyncStatus ?? sourceProduct?.syncStatus ?? InventorySyncStatus.STALE,
-        lastStockSyncAt: variant.inventory?.lastStockSyncAt ?? sourceProduct?.lastSyncedAt ?? null,
+        inventorySyncStatus,
+        lastStockSyncAt,
         salePrice: variant.price?.salePrice ?? null,
         promotionalPrice: variant.price?.promotionalPrice ?? null,
         costPrice: variant.price?.costPrice ?? null,
@@ -262,8 +268,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         effectiveLowStockThreshold: thresholds.low,
         band,
         sourceSyncStatus: sourceProduct?.syncStatus ?? null,
-        sourceLastSyncedAt: sourceProduct?.lastSyncedAt ?? null,
-        sourceFallbackInventory: sourceProduct?.fallbackInventory ?? null
+        sourceLastSyncedAt: sourceProduct?.lastSyncedAt ?? null
       };
     });
 

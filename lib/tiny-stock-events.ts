@@ -15,6 +15,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getStockBand, resolveStockThresholds } from "@/lib/stock";
 import { getTinyStockByProductId, isTinyConfigured, searchTinyProductsBySku, type TinyAccountKey, toStringValue } from "@/lib/tiny";
+import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 
 const tinyWebhookEnvelopeSchema = z.object({
   tipo: z.string().optional(),
@@ -67,7 +68,6 @@ type FoundationVariantInventoryTarget = {
   catalogVariantId: string;
   sku: string;
   sourceProductId: string | null;
-  fallbackInventory: number | null;
   sourceSyncStatus: InventorySyncStatus | null;
   sourceLastSyncedAt: Date | null;
   productCriticalStockThreshold: number | null;
@@ -113,7 +113,6 @@ async function resolveFoundationVariantInventoryTargetByCatalogVariantId(
     catalogVariantId: catalogVariant.id,
     sku: catalogVariant.sku,
     sourceProductId: catalogVariant.sourceProductId ?? null,
-    fallbackInventory: catalogVariant.inventory?.availableMultiCompanyStock ?? sourceProduct?.fallbackInventory ?? null,
     sourceSyncStatus: sourceProduct?.syncStatus ?? null,
     sourceLastSyncedAt: sourceProduct?.lastSyncedAt ?? null,
     productCriticalStockThreshold: sourceProduct?.criticalStockThreshold ?? null,
@@ -306,6 +305,10 @@ export async function persistFoundationVariantInventory(params: {
   quantity: number | null;
   syncStatus: InventorySyncStatus;
   syncedAt: Date;
+  sourceAccountKey?: TinyAccountKey | null;
+  reconciledTinyProductId?: string | null;
+  rawPayload?: string | null;
+  localSignalQuantity?: number | null;
 }) {
   const target = await resolveFoundationVariantInventoryTargetByCatalogVariantId(params.catalogVariantId);
 
@@ -331,7 +334,10 @@ export async function persistFoundationVariantInventory(params: {
       stockStatus: stockBand,
       inventorySyncStatus: params.syncStatus,
       lastStockSyncAt: params.syncedAt,
-      source: "tiny"
+      source: "tiny",
+      sourceAccountKey: params.sourceAccountKey ?? null,
+      lastReconciledTinyId: params.reconciledTinyProductId ?? null,
+      rawPayload: params.rawPayload ?? null
     },
     create: {
       catalogVariantId: target.catalogVariantId,
@@ -339,9 +345,45 @@ export async function persistFoundationVariantInventory(params: {
       stockStatus: stockBand,
       inventorySyncStatus: params.syncStatus,
       lastStockSyncAt: params.syncedAt,
-      source: "tiny"
+      source: "tiny",
+      sourceAccountKey: params.sourceAccountKey ?? null,
+      lastReconciledTinyId: params.reconciledTinyProductId ?? null,
+      rawPayload: params.rawPayload ?? null
     }
   });
+
+  if (params.sourceAccountKey) {
+    await prisma.catalogVariantAccountState.upsert({
+      where: {
+        catalogVariantId_accountKey: {
+          catalogVariantId: target.catalogVariantId,
+          accountKey: params.sourceAccountKey
+        }
+      },
+      update: {
+        sku: target.sku,
+        tinyProductId: params.reconciledTinyProductId ?? null,
+        localAvailableStock: params.localSignalQuantity ?? null,
+        availableMultiCompanyStock: params.quantity,
+        inventorySyncStatus: params.syncStatus,
+        lastStockSyncAt: params.syncedAt,
+        source: "tiny",
+        rawPayload: params.rawPayload ?? null
+      },
+      create: {
+        catalogVariantId: target.catalogVariantId,
+        accountKey: params.sourceAccountKey,
+        sku: target.sku,
+        tinyProductId: params.reconciledTinyProductId ?? null,
+        localAvailableStock: params.localSignalQuantity ?? null,
+        availableMultiCompanyStock: params.quantity,
+        inventorySyncStatus: params.syncStatus,
+        lastStockSyncAt: params.syncedAt,
+        source: "tiny",
+        rawPayload: params.rawPayload ?? null
+      }
+    });
+  }
 
   if (target.sourceProductId) {
     await prisma.inventorySnapshot.create({
@@ -356,7 +398,7 @@ export async function persistFoundationVariantInventory(params: {
     await prisma.product.update({
       where: { id: target.sourceProductId },
       data: {
-        fallbackInventory: params.quantity ?? target.fallbackInventory,
+        fallbackInventory: params.quantity,
         lastSyncedAt: params.syncedAt,
         syncStatus:
           params.syncStatus === InventorySyncStatus.FRESH
@@ -492,7 +534,11 @@ export async function handleTinyStockWebhook(
       catalogVariantId,
       quantity: finalQuantity,
       syncStatus: finalQuantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-      syncedAt: processedAt
+      syncedAt: processedAt,
+      sourceAccountKey: accountKey,
+      reconciledTinyProductId: reconciledQuantity?.tinyProductId ?? tinyProductId,
+      rawPayload: JSON.stringify(rawPayload),
+      localSignalQuantity: quantity
     });
     const processingStage = isSyntheticSmokeEvent
       ? "synthetic_smoke"
@@ -663,16 +709,19 @@ export async function reconcileVariantInventory(params: {
           catalogVariantId: variant.id,
           quantity,
           syncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
-          syncedAt: new Date()
+          syncedAt: new Date(),
+          sourceAccountKey: getPepperPhysicalStockAccountKey(),
+          reconciledTinyProductId: refreshProductId
         });
         updated += 1;
       } catch (error) {
-        const fallbackQuantity = variant.inventory?.availableMultiCompanyStock ?? null;
+        const fallbackQuantity = getTrustedFoundationInventoryQuantity(variant.inventory);
         await persistFoundationVariantInventory({
           catalogVariantId: variant.id,
           quantity: fallbackQuantity,
           syncStatus: InventorySyncStatus.ERROR,
-          syncedAt: new Date()
+          syncedAt: new Date(),
+          sourceAccountKey: getPepperPhysicalStockAccountKey()
         });
 
         await prisma.tinyWebhookLog.create({

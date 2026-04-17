@@ -1,4 +1,5 @@
 import { getDemoAdminPageData } from "@/lib/demo-data";
+import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
 import { getLocalAdminDashboardData } from "@/lib/local-dashboard-data";
 import {
@@ -534,7 +535,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
       );
       const stock = Number(
         sumNumbers(
-        catalogProduct.variants.map((variant) => variant.inventory?.availableMultiCompanyStock ?? 0)
+        catalogProduct.variants.map((variant) => getTrustedFoundationInventoryQuantity(variant.inventory) ?? 0)
         )
       );
       const band: StockBand =

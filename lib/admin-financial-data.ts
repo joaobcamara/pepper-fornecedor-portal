@@ -1,5 +1,6 @@
 import { getDemoAdminPageData } from "@/lib/demo-data";
 import { getFinancialPeriodMeta, type FinancialPeriodKey } from "@/lib/financial-period";
+import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 import { prisma } from "@/lib/prisma";
 import { sumNumbers } from "@/lib/sales-metrics";
 
@@ -94,7 +95,7 @@ export async function getAdminFinancialData(periodKey: FinancialPeriodKey): Prom
         const inventorySaleValue = Number(
           sumNumbers(
             product.variants.map((variant) => {
-              const quantity = variant.inventory?.availableMultiCompanyStock ?? 0;
+              const quantity = getTrustedFoundationInventoryQuantity(variant.inventory) ?? 0;
               const effectivePrice = variant.price?.promotionalPrice ?? variant.price?.salePrice ?? 0;
               return quantity * effectivePrice;
             })
@@ -103,7 +104,7 @@ export async function getAdminFinancialData(periodKey: FinancialPeriodKey): Prom
         const inventoryCostValue = Number(
           sumNumbers(
             product.variants.map((variant) => {
-              const quantity = variant.inventory?.availableMultiCompanyStock ?? 0;
+              const quantity = getTrustedFoundationInventoryQuantity(variant.inventory) ?? 0;
               return quantity * (variant.price?.costPrice ?? 0);
             })
           )

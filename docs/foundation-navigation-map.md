@@ -121,6 +121,8 @@ Como fazer:
 - saldo oficial consumido pelo portal = `availableMultiCompanyStock`
 - webhook de estoque = gatilho de reconciliacao
 - nao aplicar delta cego como saldo final
+- o portal so deve consumir saldo quando `CatalogInventory` tiver origem auditavel da fundacao nova
+- `CatalogVariantAccountState` guarda o retrato por conta; `CatalogInventory` guarda o saldo multiempresa oficial
 
 Manual principal:
 
