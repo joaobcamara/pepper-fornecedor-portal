@@ -433,18 +433,36 @@ export async function syncCatalogVariantInventory(
     stockStatus: string;
     inventorySyncStatus: InventorySyncStatus;
     syncedAt: Date;
+    sourceAccountKey?: string | null;
+    reconciledTinyProductId?: string | null;
+    rawPayload?: string | null;
   }
 ) {
   const catalogVariant = await db.catalogVariant.findFirst({
     where: {
       OR: [{ sourceProductId: params.sourceProductId }]
     },
-    select: { id: true }
+    select: {
+      id: true,
+      tinyProductId: true,
+      inventory: {
+        select: {
+          sourceAccountKey: true,
+          lastReconciledTinyId: true,
+          rawPayload: true
+        }
+      }
+    }
   });
 
   if (!catalogVariant) {
     return;
   }
+
+  const resolvedSourceAccountKey = params.sourceAccountKey ?? catalogVariant.inventory?.sourceAccountKey ?? null;
+  const resolvedTinyProductId =
+    params.reconciledTinyProductId ?? catalogVariant.inventory?.lastReconciledTinyId ?? catalogVariant.tinyProductId ?? null;
+  const resolvedRawPayload = params.rawPayload ?? catalogVariant.inventory?.rawPayload ?? null;
 
   await db.catalogInventory.upsert({
     where: {
@@ -455,7 +473,10 @@ export async function syncCatalogVariantInventory(
       stockStatus: params.stockStatus,
       inventorySyncStatus: params.inventorySyncStatus,
       lastStockSyncAt: params.syncedAt,
-      source: "tiny"
+      source: "tiny",
+      sourceAccountKey: resolvedSourceAccountKey,
+      lastReconciledTinyId: resolvedTinyProductId,
+      rawPayload: resolvedRawPayload
     },
     create: {
       catalogVariantId: catalogVariant.id,
@@ -463,7 +484,10 @@ export async function syncCatalogVariantInventory(
       stockStatus: params.stockStatus,
       inventorySyncStatus: params.inventorySyncStatus,
       lastStockSyncAt: params.syncedAt,
-      source: "tiny"
+      source: "tiny",
+      sourceAccountKey: resolvedSourceAccountKey,
+      lastReconciledTinyId: resolvedTinyProductId,
+      rawPayload: resolvedRawPayload
     }
   });
 }
