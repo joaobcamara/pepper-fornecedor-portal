@@ -4,12 +4,21 @@ import { AdminShellV2 as AdminShell } from "@/components/admin-shell-v2";
 import { getAdminPageData } from "@/lib/admin-data";
 import { getCurrentSession } from "@/lib/session";
 
-export default async function AdminProductsPage() {
+export default async function AdminProductsPage({
+  searchParams
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getCurrentSession();
 
   if (!session || session.role !== "ADMIN") {
     redirect("/login?next=/admin/produtos");
   }
+
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const initialSkuQuery = typeof resolvedSearchParams.sku === "string" ? resolvedSearchParams.sku : "";
+  const initialSelectedSku = typeof resolvedSearchParams.open === "string" ? resolvedSearchParams.open : null;
+  const initialSupplierId = typeof resolvedSearchParams.supplier === "string" ? resolvedSearchParams.supplier : "all";
 
   const { suppliers, productGroups, dashboard, tinyConfigured } = await getAdminPageData();
   const staleGroupCount = productGroups.filter((item) => item.staleCount > 0).length;
@@ -35,6 +44,9 @@ export default async function AdminProductsPage() {
         productGroups={productGroups}
         dashboard={dashboard}
         tinyConfigured={tinyConfigured}
+        initialSkuQuery={initialSkuQuery}
+        initialSelectedSku={initialSelectedSku}
+        initialSupplierId={initialSupplierId}
       />
     </AdminShell>
   );

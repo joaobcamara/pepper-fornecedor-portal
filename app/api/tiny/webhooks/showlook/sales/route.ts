@@ -11,5 +11,5 @@ export async function HEAD() {
 }
 
 export async function POST(request: Request) {
-  return handleTinySalesWebhookRequest(request, "showlook");
+  return handleTinySalesWebhookRequest(request, "showlook", "sales");
 }

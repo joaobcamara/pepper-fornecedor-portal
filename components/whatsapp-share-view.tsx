@@ -69,6 +69,17 @@ export function WhatsAppShareView({
   const noteChanged = note.trim() !== link.originalNote.trim();
   const hasRecipientChanges = requestChangedCount > 0 || noteChanged;
 
+  const groupedRowsByColor = useMemo(
+    () =>
+      colorLabels.map((color) => ({
+        color,
+        items: sizeLabels
+          .map((size) => rows.find((row) => row.colorLabel === color && row.sizeLabel === size) ?? null)
+          .filter((item): item is NonNullable<typeof item> => item !== null)
+      })),
+    [colorLabels, rows, sizeLabels]
+  );
+
   async function saveChanges(nextStatus?: WhatsAppShareStatus) {
     setError(null);
     setFeedback(null);
@@ -236,38 +247,48 @@ export function WhatsAppShareView({
               ))}
             </div>
           ) : (
-            <div className="mt-5 overflow-x-auto rounded-[1.5rem] border border-slate-200">
-              <div
-                className="grid min-w-[640px] bg-slate-50 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500"
-                style={{ gridTemplateColumns: `1.15fr repeat(${sizeLabels.length}, minmax(0, 1fr))` }}
-              >
-                <div className="px-4 py-3">Cor</div>
-                {sizeLabels.map((size) => (
-                  <div key={size} className="px-4 py-3 text-center text-sm">
-                    {size}
-                  </div>
-                ))}
-              </div>
-              {colorLabels.map((color) => (
-                <div
-                  key={color}
-                  className="grid border-t border-slate-100 bg-white"
-                  style={{ gridTemplateColumns: `1.15fr repeat(${sizeLabels.length}, minmax(0, 1fr))` }}
-                >
-                  <div className="px-4 py-4 text-lg font-semibold text-slate-900">{color}</div>
-                  {sizeLabels.map((size) => {
-                    const item = rows.find((row) => row.colorLabel === color && row.sizeLabel === size) ?? null;
+            <>
+              <div className="mt-5 space-y-4 sm:hidden">
+                {groupedRowsByColor.map((group) => (
+                  <section key={group.color} className="rounded-[1.5rem] border border-[#f3d0bd] bg-[#fffaf7] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xl font-semibold text-slate-900">{group.color}</p>
+                        <p className="mt-1 text-sm text-slate-500">{group.items.length} tamanhos nesta cor</p>
+                      </div>
+                      <span className="rounded-full bg-[#fff1e7] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#a94b25]">
+                        Cor
+                      </span>
+                    </div>
 
-                    return (
-                      <div key={`${color}-${size}`} className="px-3 py-3">
-                        {item ? (
-                          <div className="rounded-[1.3rem] border border-slate-200 bg-slate-50 px-3 py-3">
-                            <p className="text-lg font-semibold text-slate-900">estoque {item.currentStock ?? "-"}</p>
-                            {item.requestedQuantity !== item.originalRequestedQuantity ? (
-                              <p className="mt-1 text-sm font-semibold text-[#a94b25]">
-                                original {item.originalRequestedQuantity}
-                              </p>
+                    <div className="mt-4 space-y-3">
+                      {group.items.map((item) => (
+                        <article key={item.id} className="rounded-[1.3rem] border border-slate-200 bg-white p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-lg font-semibold text-[#a94b25]">{item.sizeLabel}</p>
+                              <p className="mt-1 text-sm text-slate-500">{item.sku}</p>
+                            </div>
+                            {item.requestChanged || item.stockChanged ? (
+                              <span className="rounded-full bg-[#fff1e7] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#a94b25]">
+                                Alterado
+                              </span>
                             ) : null}
+                          </div>
+
+                          <div className="mt-4 grid grid-cols-2 gap-3">
+                            <MetricCard label="Estoque" value={String(item.currentStock ?? "-")} />
+                            <MetricCard label="Pedido" value={String(item.requestedQuantity)} />
+                          </div>
+
+                          {item.requestedQuantity !== item.originalRequestedQuantity ? (
+                            <p className="mt-3 text-sm font-semibold text-[#a94b25]">
+                              Pedido original: {item.originalRequestedQuantity}
+                            </p>
+                          ) : null}
+
+                          <label className="mt-4 block">
+                            <span className="mb-2 block text-sm font-semibold text-slate-700">Quantidade deste tamanho</span>
                             <input
                               type="number"
                               min={0}
@@ -284,20 +305,79 @@ export function WhatsAppShareView({
                                   )
                                 )
                               }
-                              className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-center text-lg font-semibold text-slate-900 outline-none"
+                              className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-center text-xl font-semibold text-slate-900 outline-none"
                             />
-                          </div>
-                        ) : (
-                          <div className="rounded-[1.3rem] border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-300">
-                            -
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                          </label>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+
+              <div className="mt-5 hidden overflow-x-auto rounded-[1.5rem] border border-slate-200 sm:block">
+                <div
+                  className="grid min-w-[640px] bg-slate-50 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500"
+                  style={{ gridTemplateColumns: `1.15fr repeat(${sizeLabels.length}, minmax(0, 1fr))` }}
+                >
+                  <div className="px-4 py-3">Cor</div>
+                  {sizeLabels.map((size) => (
+                    <div key={size} className="px-4 py-3 text-center text-sm">
+                      {size}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+                {colorLabels.map((color) => (
+                  <div
+                    key={color}
+                    className="grid border-t border-slate-100 bg-white"
+                    style={{ gridTemplateColumns: `1.15fr repeat(${sizeLabels.length}, minmax(0, 1fr))` }}
+                  >
+                    <div className="px-4 py-4 text-lg font-semibold text-slate-900">{color}</div>
+                    {sizeLabels.map((size) => {
+                      const item = rows.find((row) => row.colorLabel === color && row.sizeLabel === size) ?? null;
+
+                      return (
+                        <div key={`${color}-${size}`} className="px-3 py-3">
+                          {item ? (
+                            <div className="rounded-[1.3rem] border border-slate-200 bg-slate-50 px-3 py-3">
+                              <p className="text-lg font-semibold text-slate-900">estoque {item.currentStock ?? "-"}</p>
+                              {item.requestedQuantity !== item.originalRequestedQuantity ? (
+                                <p className="mt-1 text-sm font-semibold text-[#a94b25]">
+                                  original {item.originalRequestedQuantity}
+                                </p>
+                              ) : null}
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.requestedQuantity}
+                                onChange={(event) =>
+                                  setRows((current) =>
+                                    current.map((row) =>
+                                      row.id === item.id
+                                        ? {
+                                            ...row,
+                                            requestedQuantity: Number(event.target.value || 0)
+                                          }
+                                        : row
+                                    )
+                                  )
+                                }
+                                className="mt-3 h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-center text-lg font-semibold text-slate-900 outline-none"
+                              />
+                            </div>
+                          ) : (
+                            <div className="rounded-[1.3rem] border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-300">
+                              -
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
 

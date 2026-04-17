@@ -43,6 +43,7 @@ export default async function AdminSincronizacoesPage() {
         syncRuns={pageData?.syncRuns ?? []}
         webhookLogs={pageData?.webhookLogs ?? []}
         foundationHealth={pageData?.foundationHealth ?? null}
+        webhookHealth={pageData?.webhookHealth ?? []}
       />
     </AdminShell>
   );

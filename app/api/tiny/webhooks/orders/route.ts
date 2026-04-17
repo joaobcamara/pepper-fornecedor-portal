@@ -16,5 +16,5 @@ export async function HEAD(request: Request) {
 }
 
 export async function POST(request: Request) {
-  return handleTinySalesWebhookRequest(request, resolveTinyWebhookAccountKey(request));
+  return handleTinySalesWebhookRequest(request, resolveTinyWebhookAccountKey(request), "orders");
 }

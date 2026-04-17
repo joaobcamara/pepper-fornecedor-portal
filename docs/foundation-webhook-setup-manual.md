@@ -41,11 +41,16 @@ usar as rotas curtas dedicadas por conta:
 
 ### Observacao
 
-`/api/tiny/webhooks/orders` e um alias semantico da mesma camada de pedido/venda.  
-Ele existe para facilitar a configuracao no Tiny quando o painel separar "vendas" de "pedidos enviados".
-
 As rotas curtas acima existem para reduzir o tamanho da URL e evitar depender do
 parametro `account` na query string.
+
+Na fundacao:
+
+- `sales` entra como `webhookType = sales` e `scope = tiny_sales`
+- `orders` entra como `webhookType = orders` e `scope = tiny_orders`
+
+Os dois dominios continuam alimentando o contexto comercial do pedido, mas agora
+ficam observaveis separadamente em `TinyWebhookLog` e `SyncRun`.
 
 ## Host atual
 

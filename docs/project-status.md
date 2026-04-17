@@ -66,6 +66,11 @@ Ja concluido:
 - financeiro no admin
 - conversas com cards de contexto e slash commands
 - Pepper IA bubble contextual com hints, alertas e avisos por modulo
+- QA mobile das telas criticas do admin concluida para Pepper IA, dashboard de estoque, modais de produto/financeiro e modulo WhatsApp
+- rotas curtas de webhook `sales` e `orders` publicadas para Pepper, Show Look e On Shop
+- fundacao separada para persistir `sales` e `orders` como webhooks distintos em observabilidade
+- eventos organicos de `sales` ja observados no Supabase para Show Look e On Shop em 2026-04-17
+- eventos organicos de `stock` ja observados na Pepper em 2026-04-17
 
 ## Compatibilidade
 
@@ -79,3 +84,5 @@ Ja concluido:
 - continuar a limpeza de legado residual
 - reforcar observabilidade de sincronizacoes e webhooks
 - fechar checklist final de deploy com dominio e webhooks publicos
+- aguardar eventos organicos da Pepper em `sales` e das 3 contas em `orders`
+- ativar a trilha documental/fiscal para comecar a receber arquivos do Tiny em `FoundationAsset` e `Invoice`

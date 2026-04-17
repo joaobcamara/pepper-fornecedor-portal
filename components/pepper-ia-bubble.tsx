@@ -275,12 +275,12 @@ export function PepperIaBubble({
 
   return (
       <>
-      <div className="fixed right-3 top-20 z-50 flex flex-col items-end gap-3 lg:bottom-5 lg:right-5 lg:top-auto">
+      <div className="fixed right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-50 flex flex-col items-end gap-3 lg:bottom-5 lg:right-5 lg:top-auto">
         <button
           type="button"
           onClick={() => setIsOpen((current) => !current)}
           className={cn(
-            "relative inline-flex h-12 w-12 items-center justify-center rounded-full border p-0 text-xs font-semibold transition duration-300 hover:scale-[1.02] lg:h-auto lg:w-auto lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
+            "relative inline-flex h-11 w-11 items-center justify-center rounded-full border p-0 text-xs font-semibold transition duration-300 hover:scale-[1.02] lg:h-auto lg:w-auto lg:gap-3 lg:px-4 lg:py-3 lg:text-sm",
             role === "ADMIN"
               ? "border-[#d7dff2] bg-[linear-gradient(135deg,#f7faff_0%,#edf3ff_58%,#dde9ff_100%)] text-[#2f4678] shadow-[0_18px_42px_rgba(91,113,162,0.18)]"
               : theme.buttonClassName,
@@ -313,7 +313,7 @@ export function PepperIaBubble({
       {isOpen ? (
         <div className="fixed inset-0 z-40 bg-slate-950/20 backdrop-blur-[2px]" onClick={() => setIsOpen(false)}>
           <div
-            className="absolute inset-x-3 bottom-3 top-20 flex w-auto flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/95 shadow-[0_25px_80px_rgba(15,23,42,0.22)] md:inset-x-auto md:bottom-24 md:right-5 md:top-auto md:h-[min(42rem,calc(100vh-8rem))] md:w-[min(26rem,calc(100vw-2.5rem))]"
+            className="absolute inset-x-3 bottom-3 top-[calc(env(safe-area-inset-top)+4rem)] flex w-auto flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/95 shadow-[0_25px_80px_rgba(15,23,42,0.22)] md:inset-x-auto md:bottom-24 md:right-5 md:top-auto md:h-[min(42rem,calc(100vh-8rem))] md:w-[min(26rem,calc(100vw-2.5rem))]"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="border-b border-slate-200 px-5 py-4">

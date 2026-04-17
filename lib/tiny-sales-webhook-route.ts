@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isTinyWebhookAuthorized } from "@/lib/tiny-stock-events";
-import { handleTinySalesWebhook } from "@/lib/tiny-sales-events";
+import { handleTinySalesWebhook, type TinyCommercialWebhookKind } from "@/lib/tiny-sales-events";
 import type { TinyAccountKey } from "@/lib/tiny";
 
 async function parseWebhookPayload(request: Request) {
@@ -68,7 +68,11 @@ export function buildTinyWebhookPingResponse(webhook: "sales" | "orders", accoun
   });
 }
 
-export async function handleTinySalesWebhookRequest(request: Request, forcedAccountKey?: TinyAccountKey) {
+export async function handleTinySalesWebhookRequest(
+  request: Request,
+  forcedAccountKey?: TinyAccountKey,
+  webhookType: TinyCommercialWebhookKind = "sales"
+) {
   if (!isTinyWebhookAuthorized(request)) {
     return NextResponse.json({ error: "Webhook nao autorizado." }, { status: 401 });
   }
@@ -80,12 +84,15 @@ export async function handleTinySalesWebhookRequest(request: Request, forcedAcco
   }
 
   try {
-    const result = await handleTinySalesWebhook(payload, forcedAccountKey ?? resolveTinyWebhookAccountKey(request));
+    const result = await handleTinySalesWebhook(payload, forcedAccountKey ?? resolveTinyWebhookAccountKey(request), webhookType);
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Falha ao processar webhook de vendas."
+        error:
+          error instanceof Error
+            ? error.message
+            : `Falha ao processar webhook de ${webhookType === "orders" ? "pedidos enviados" : "vendas"}.`
       },
       { status: 400 }
     );

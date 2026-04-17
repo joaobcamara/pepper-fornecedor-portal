@@ -38,9 +38,11 @@ const salesWebhookSchema = z.object({
       situacao: z.string().optional(),
       valor: z.union([z.string(), z.number()]).optional(),
       idVendedor: z.union([z.string(), z.number()]).optional()
-    })
-    .optional()
+  })
+  .optional()
 });
+
+export type TinyCommercialWebhookKind = "sales" | "orders";
 
 function startOfDay(date: Date) {
   const day = new Date(date);
@@ -721,12 +723,17 @@ async function persistSalesOrderFromAccount(
   };
 }
 
-export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: TinyAccountKey = "pepper") {
+export async function handleTinySalesWebhook(
+  rawPayload: unknown,
+  accountKey: TinyAccountKey = "pepper",
+  webhookType: TinyCommercialWebhookKind = "sales"
+) {
+  const webhookLabel = webhookType === "orders" ? "pedidos enviados" : "vendas";
   const parsed = salesWebhookSchema.safeParse(rawPayload);
 
   if (!parsed.success) {
     const received = await beginFoundationWebhookProcessing({
-      webhookType: "sales",
+      webhookType,
       accountKey,
       eventType: "unknown",
       entityType: "sales_order",
@@ -741,13 +748,13 @@ export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: Ti
         logId: received.logId,
         status: "invalid_payload",
         processingStage: "failed",
-        errorMessage: "Payload de vendas invalido."
+        errorMessage: `Payload de ${webhookLabel} invalido.`
       });
     }
-    throw new Error("Payload de vendas invalido.");
+    throw new Error(`Payload de ${webhookLabel} invalido.`);
   }
 
-  const eventType = parsed.data.tipo?.trim() ?? "sales";
+  const eventType = parsed.data.tipo?.trim() ?? webhookType;
   const orderId =
     parsed.data.dados?.idPedido ??
     parsed.data.dados?.idObjeto ??
@@ -755,7 +762,7 @@ export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: Ti
     parsed.data.id;
   const scopedOrderId = buildScopedTinyId(accountKey, toStringValue(orderId));
   const received = await beginFoundationWebhookProcessing({
-    webhookType: "sales",
+    webhookType,
     accountKey,
     eventType,
     entityType: "sales_order",
@@ -789,8 +796,8 @@ export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: Ti
   }
 
   const syncRun = await createFoundationSyncRun({
-    triggerType: "webhook",
-    scope: "tiny_sales",
+    triggerType: `${webhookType}_webhook`,
+    scope: `tiny_${webhookType}`,
     status: "processing",
     accountKey,
     entityType: "sales_order",
@@ -837,7 +844,7 @@ export async function handleTinySalesWebhook(rawPayload: unknown, accountKey: Ti
       ...result
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao processar webhook de vendas.";
+    const message = error instanceof Error ? error.message : `Falha ao processar webhook de ${webhookLabel}.`;
 
     await finalizeFoundationWebhookProcessing({
       logId: received.logId,

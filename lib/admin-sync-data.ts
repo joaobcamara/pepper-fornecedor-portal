@@ -74,16 +74,33 @@ type FoundationHealth = {
   note: string;
 };
 
+type WebhookHealthTone = "healthy" | "warning" | "critical";
+type MonitoredWebhookType = "sales" | "orders" | "stock";
+
+type WebhookAccountHealth = {
+  accountKey: TinyAccountKey;
+  accountLabel: string;
+  webhookType: MonitoredWebhookType;
+  processedCount24h: number;
+  errorCount24h: number;
+  lastEventAt: string | null;
+  lastStatus: string | null;
+  tone: WebhookHealthTone;
+  note: string;
+};
+
 export type AdminSyncPageData = {
   summary: SyncSummary;
   syncRuns: SyncRunRow[];
   webhookLogs: WebhookRow[];
   foundationHealth: FoundationHealth;
+  webhookHealth: WebhookAccountHealth[];
   pepperIaAlertCount: number;
   pepperIaHint: string;
 };
 
 const TINY_ACCOUNTS: TinyAccountKey[] = ["pepper", "showlook", "onshop"];
+const MONITORED_WEBHOOKS: MonitoredWebhookType[] = ["sales", "orders", "stock"];
 
 function formatDateTime(value?: Date | null) {
   return value ? value.toLocaleString("pt-BR") : null;
@@ -158,9 +175,11 @@ function resolveSalesOrderAccountKey(order: { tinyOrderId: string; marketplace: 
 }
 
 export async function getAdminSyncPageData(): Promise<AdminSyncPageData> {
+  const webhookHealthSince = new Date(Date.now() - 1000 * 60 * 60 * 24);
   const [
     syncRuns,
     webhookLogs,
+    webhookHealthLogs,
     catalogProductCount,
     catalogVariantCount,
     inventoryVariantCount,
@@ -182,6 +201,23 @@ export async function getAdminSyncPageData(): Promise<AdminSyncPageData> {
     }),
     prisma.tinyWebhookLog.findMany({
       take: 16,
+      orderBy: {
+        createdAt: "desc"
+      }
+    }),
+    prisma.tinyWebhookLog.findMany({
+      where: {
+        createdAt: {
+          gte: webhookHealthSince
+        },
+        accountKey: {
+          in: TINY_ACCOUNTS
+        },
+        webhookType: {
+          in: MONITORED_WEBHOOKS
+        }
+      },
+      take: 300,
       orderBy: {
         createdAt: "desc"
       }
@@ -323,6 +359,50 @@ export async function getAdminSyncPageData(): Promise<AdminSyncPageData> {
     };
   });
 
+  const webhookHealth: WebhookAccountHealth[] = TINY_ACCOUNTS.flatMap((accountKey) =>
+    MONITORED_WEBHOOKS.map((webhookType) => {
+      const logs = webhookHealthLogs.filter((log) => log.accountKey === accountKey && log.webhookType === webhookType);
+      const processedCount24h = logs.filter((log) => log.status === "processed").length;
+      const errorCount24h = logs.filter((log) => log.status !== "processed").length;
+      const latest = logs[0];
+
+      let tone: WebhookHealthTone = "warning";
+      let note = "Sem evento recente.";
+
+      if (processedCount24h > 0 && errorCount24h === 0) {
+        tone = "healthy";
+        note = `${processedCount24h} eventos processados nas ultimas 24h.`;
+      } else if (processedCount24h > 0) {
+        tone = "warning";
+        note = `${processedCount24h} eventos processados e ${errorCount24h} com revisao nas ultimas 24h.`;
+      } else if (errorCount24h > 0) {
+        tone = "warning";
+        note = `${errorCount24h} eventos com revisao e nenhum processado nas ultimas 24h.`;
+      } else if (webhookType === "sales" && accountKey === "pepper") {
+        tone = "critical";
+        note = "A URL publica responde 200, mas a conta Pepper nao manteve vendas ativas no Tiny.";
+      } else if (webhookType === "orders") {
+        note = "Sem evento organico recente de pedidos enviados.";
+      } else if (webhookType === "stock") {
+        note = "Sem evento organico recente de estoque.";
+      } else {
+        note = "Sem evento organico recente de vendas.";
+      }
+
+      return {
+        accountKey,
+        accountLabel: getTinyAccountLabel(accountKey),
+        webhookType,
+        processedCount24h,
+        errorCount24h,
+        lastEventAt: formatDateTime(latest?.createdAt),
+        lastStatus: latest?.status ?? null,
+        tone,
+        note
+      };
+    })
+  );
+
   const foundationHealth: FoundationHealth = {
     catalogProductCount,
     catalogVariantCount,
@@ -388,7 +468,13 @@ export async function getAdminSyncPageData(): Promise<AdminSyncPageData> {
       createdAt: formatDateTime(log.createdAt) ?? ""
     })),
     foundationHealth,
-    pepperIaAlertCount: summary.failedRuns + summary.partialRuns + summary.webhookErrors + (salesOrderCount === 0 ? 1 : 0),
+    webhookHealth,
+    pepperIaAlertCount:
+      summary.failedRuns +
+      summary.partialRuns +
+      summary.webhookErrors +
+      webhookHealth.filter((item) => item.tone !== "healthy").length +
+      (salesOrderCount === 0 ? 1 : 0),
     pepperIaHint
   };
 }

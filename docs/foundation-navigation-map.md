@@ -158,6 +158,7 @@ Como fazer:
 - chave de pedido sempre escopada por conta
 - Pepper, Show Look e On Shop entram no dominio comercial
 - pedido/reserva afeta leitura comercial e pode refletir saldo se o Tiny ja refletir multiempresa
+- `sales` e `orders` devem permanecer rastreaveis separadamente em `TinyWebhookLog` e `SyncRun`
 
 ### 5. Conversas e sugestoes
 

@@ -79,16 +79,33 @@ type FoundationHealth = {
   note: string;
 };
 
+type WebhookHealthTone = "healthy" | "warning" | "critical";
+type MonitoredWebhookType = "sales" | "orders" | "stock";
+
+type WebhookAccountHealth = {
+  accountKey: string;
+  accountLabel: string;
+  webhookType: MonitoredWebhookType;
+  processedCount24h: number;
+  errorCount24h: number;
+  lastEventAt: string | null;
+  lastStatus: string | null;
+  tone: WebhookHealthTone;
+  note: string;
+};
+
 export function AdminSyncCenterV2({
   summary,
   syncRuns,
   webhookLogs,
-  foundationHealth
+  foundationHealth,
+  webhookHealth
 }: {
   summary: SyncSummary;
   syncRuns: SyncRunRow[];
   webhookLogs: WebhookRow[];
   foundationHealth: FoundationHealth | null;
+  webhookHealth: WebhookAccountHealth[];
 }) {
   const router = useRouter();
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -207,6 +224,15 @@ export function AdminSyncCenterV2({
     }
   }
 
+  const webhookHealthByAccount = webhookHealth.reduce<Record<string, WebhookAccountHealth[]>>((accumulator, item) => {
+    if (!accumulator[item.accountKey]) {
+      accumulator[item.accountKey] = [];
+    }
+
+    accumulator[item.accountKey].push(item);
+    return accumulator;
+  }, {});
+
   return (
     <section className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -298,6 +324,57 @@ export function AdminSyncCenterV2({
             <li>A reconciliacao continua como rede de seguranca para manter consistencia.</li>
           </ul>
         </section>
+      </section>
+
+      <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Saude organica dos webhooks</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Acompanhe por conta se `sales`, `orders` e `stock` estao chegando organicamente na fundacao.
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Ultimas 24h</span>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+          {Object.values(webhookHealthByAccount).map((accountItems) => (
+            <div key={accountItems[0]?.accountKey ?? "account"} className="rounded-[1.5rem] border border-slate-100 bg-slate-50/80 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-900">{accountItems[0]?.accountLabel}</p>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                  {accountItems.filter((item) => item.tone === "healthy").length}/{accountItems.length} saudaveis
+                </span>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {accountItems.map((item) => (
+                  <div key={`${item.accountKey}-${item.webhookType}`} className="rounded-2xl border border-white bg-white px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{getWebhookTypeLabel(item.webhookType)}</p>
+                        <p className="text-xs text-slate-500">
+                          {item.lastEventAt ? `Ultimo evento em ${item.lastEventAt}` : "Sem evento recente"}
+                        </p>
+                      </div>
+                      <WebhookHealthBadge tone={item.tone}>
+                        {item.tone === "healthy" ? "Ativo" : item.tone === "critical" ? "Instavel" : "Observando"}
+                      </WebhookHealthBadge>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                      <div className="rounded-xl bg-slate-50 px-3 py-2">OK: {item.processedCount24h}</div>
+                      <div className="rounded-xl bg-slate-50 px-3 py-2">Revisao: {item.errorCount24h}</div>
+                    </div>
+
+                    <p className="mt-3 text-xs leading-5 text-slate-500">{item.note}</p>
+                    {item.lastStatus ? <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-400">Status recente: {item.lastStatus}</p> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
@@ -579,6 +656,33 @@ function StatusBadge({ status, children }: { status: string; children?: ReactNod
       {children ?? status}
     </span>
   );
+}
+
+function WebhookHealthBadge({ tone, children }: { tone: WebhookHealthTone; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "rounded-full px-3 py-1 text-xs font-semibold",
+        tone === "healthy" && "bg-emerald-50 text-emerald-700",
+        tone === "warning" && "bg-amber-50 text-amber-700",
+        tone === "critical" && "bg-rose-50 text-rose-700"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function getWebhookTypeLabel(type: MonitoredWebhookType) {
+  if (type === "sales") {
+    return "Vendas";
+  }
+
+  if (type === "orders") {
+    return "Pedidos enviados";
+  }
+
+  return "Estoque";
 }
 
 function EmptyState({ label }: { label: string }) {

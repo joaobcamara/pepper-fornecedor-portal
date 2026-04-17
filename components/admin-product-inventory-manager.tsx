@@ -157,12 +157,18 @@ export function AdminProductInventoryManager({
   suppliers,
   productGroups,
   dashboard,
-  tinyConfigured
+  tinyConfigured,
+  initialSkuQuery = "",
+  initialSelectedSku = null,
+  initialSupplierId = "all"
 }: {
   suppliers: SupplierOption[];
   productGroups: ProductGroup[];
   dashboard: DashboardSummary;
   tinyConfigured: boolean;
+  initialSkuQuery?: string;
+  initialSelectedSku?: string | null;
+  initialSupplierId?: string;
 }) {
   const [drafts, setDrafts] = useState<Record<string, GroupDraft>>(() =>
     Object.fromEntries(
@@ -187,10 +193,12 @@ export function AdminProductInventoryManager({
       ])
     )
   );
-  const [selectedSupplierId, setSelectedSupplierId] = useState("all");
-  const [skuQuery, setSkuQuery] = useState("");
+  const [selectedSupplierId, setSelectedSupplierId] = useState(initialSupplierId);
+  const [skuQuery, setSkuQuery] = useState(initialSkuQuery);
   const [activePeriod, setActivePeriod] = useState<SalesPeriodKey>("1m");
-  const [selectedSku, setSelectedSku] = useState<string | null>(null);
+  const [selectedSku, setSelectedSku] = useState<string | null>(
+    initialSelectedSku && productGroups.some((group) => group.parentSku === initialSelectedSku) ? initialSelectedSku : null
+  );
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -831,16 +839,16 @@ export function AdminProductInventoryManager({
       )}
 
       {selectedGroup && selectedDraft ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-[2rem] border border-white/60 bg-white/95 p-6 shadow-panel">
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
+          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-7xl sm:rounded-[2rem] sm:p-6">
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-4">
+              <div className="flex min-w-0 flex-1 items-start gap-4">
                 <div className="relative h-20 w-20 overflow-hidden rounded-3xl border border-white bg-white shadow-inner">
                   <Image src={selectedGroup.imageUrl} alt={selectedGroup.internalName} fill className="object-contain p-2" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Gestor de produto e estoque</p>
-                  <h3 className="mt-2 text-2xl font-semibold text-slate-900">{selectedGroup.internalName}</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">{selectedGroup.internalName}</h3>
                   <p className="mt-1 text-sm text-slate-500">
                     {selectedGroup.parentSku} • {selectedGroup.variantCount} variacoes • {selectedGroup.bandLabel}
                   </p>
@@ -856,7 +864,7 @@ export function AdminProductInventoryManager({
               </button>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-5">
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
               <InfoMetric label="Estoque total" value={String(selectedGroup.totalStock)} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Vendas 30D" value={String(selectedGroup.sales["1m"])} tone="bg-slate-50 text-slate-700" />
               <InfoMetric
@@ -889,8 +897,8 @@ export function AdminProductInventoryManager({
             <div className="mt-5 grid gap-6 xl:grid-cols-[0.92fr_1.08fr]">
               <div className="space-y-5">
                 <section className="rounded-[1.7rem] border border-slate-200 bg-slate-50/80 p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
                         <p className="text-sm font-semibold text-slate-900">Configuracao do card no portal</p>
                         <p className="mt-1 text-sm text-slate-500">Catalogo canonico da fundacao, com visibilidade do card, fornecedores e limites operacionais.</p>
                     </div>
@@ -898,7 +906,7 @@ export function AdminProductInventoryManager({
                       type="button"
                       disabled={savingSku !== null}
                       onClick={() => void saveGroup(selectedGroup)}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       {savingSku === selectedGroup.parentSku ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       {savingSku === selectedGroup.parentSku ? "Salvando..." : "Salvar ajustes"}
@@ -940,7 +948,7 @@ export function AdminProductInventoryManager({
                       </label>
                     </div>
 
-                    <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                           <p className="text-sm font-semibold text-slate-900">Card visivel no portal</p>
                           <p className="text-xs text-slate-500">Quando oculto, o card sai do portal do fornecedor sem apagar o produto canonico da fundacao.</p>
@@ -990,8 +998,8 @@ export function AdminProductInventoryManager({
                 </section>
 
                 <section className="rounded-[1.7rem] border border-[#f2d7c7] bg-[#fff8f4] p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-900">Pedido direto do produto</p>
                       <p className="mt-1 text-sm text-slate-500">
                         Monte a compra a partir da grade e use a Pepper IA para preencher com base nas vendas dos ultimos 30 dias.
@@ -1000,7 +1008,7 @@ export function AdminProductInventoryManager({
                     <button
                       type="button"
                       onClick={suggestOrderWithPepperIa}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#a94c25]"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-[#a94c25] sm:w-auto"
                     >
                       <Sparkles className="h-4 w-4" />
                       Pepper AI
@@ -1128,7 +1136,94 @@ export function AdminProductInventoryManager({
                   </span>
                 </div>
 
-                <div className="mt-5 overflow-x-auto">
+                <div className="mt-5 space-y-4 sm:hidden">
+                  {matrix.map((row) => (
+                    <div key={`${row.color}-mobile`} className="rounded-[1.4rem] border border-[#f4d7c7] bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h5 className="text-base font-semibold text-slate-900">{row.color}</h5>
+                        <span className="rounded-full bg-[#fff3ec] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a94c25]">
+                          {row.items.filter(Boolean).length} tamanhos
+                        </span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {row.items.map((item, index) => {
+                          if (!item) {
+                            return null;
+                          }
+
+                          const variantDraft = selectedDraft.variants[item.sku];
+
+                          return (
+                            <div key={`${item.sku}-mobile`} className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{sizes[index]}</p>
+                                  <p className="mt-2 text-xl font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+                                  <p className="text-[11px] text-slate-500">{item.sku}</p>
+                                </div>
+                                <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
+                                  {item.band === "critical" ? "Critico" : item.band === "low" ? "Baixo" : item.band === "ok" ? "Saudavel" : "Sem leitura"}
+                                </span>
+                              </div>
+
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                                <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {item.sales[activePeriod]}</div>
+                                <div className="rounded-xl bg-white px-3 py-2">Custo: {formatCurrency(item.unitCost ?? 0)}</div>
+                              </div>
+
+                              <div className="mt-3 grid gap-2">
+                                <label className="block">
+                                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={variantDraft?.criticalStockThreshold ?? ""}
+                                    onChange={(event) =>
+                                      updateVariantDraft(selectedGroup.parentSku, item.sku, "criticalStockThreshold", event.target.value)
+                                    }
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                    placeholder={`Padrao ${selectedDraft.criticalStockThreshold || item.effectiveCriticalStockThreshold}`}
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={variantDraft?.lowStockThreshold ?? ""}
+                                    onChange={(event) =>
+                                      updateVariantDraft(selectedGroup.parentSku, item.sku, "lowStockThreshold", event.target.value)
+                                    }
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                    placeholder={`Padrao ${selectedDraft.lowStockThreshold || item.effectiveLowStockThreshold}`}
+                                  />
+                                </label>
+                                <label className="block">
+                                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={orderQuantities[item.sku] ?? ""}
+                                    onChange={(event) =>
+                                      setOrderQuantities((current) => ({
+                                        ...current,
+                                        [item.sku]: Number(event.target.value || 0)
+                                      }))
+                                    }
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                    placeholder="Qtd"
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-5 hidden overflow-x-auto sm:block">
                   <div className="min-w-[64rem] overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
                     <div
                       className="grid bg-[#fff3ec] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
@@ -1241,12 +1336,12 @@ export function AdminProductInventoryManager({
       ) : null}
 
       {importModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-6xl overflow-y-auto rounded-[2rem] border border-white/60 bg-white/95 p-6 shadow-panel">
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
+          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:rounded-[2rem] sm:p-6">
             <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Importacao integrada</p>
-                <h3 className="mt-2 text-2xl font-semibold text-slate-900">Importar produto do Tiny dentro de Produtos</h3>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">Importar produto do Tiny dentro de Produtos</h3>
                 <p className="mt-1 text-sm text-slate-500">
                   Revise o SKU pai, confirme a grade e vincule o cadastro sem sair do gestor operacional.
                 </p>

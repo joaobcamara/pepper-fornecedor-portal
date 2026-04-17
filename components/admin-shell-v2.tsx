@@ -49,7 +49,7 @@ export function AdminShellV2({
             </p>
           </div>
 
-          <nav className="mt-8 space-y-2">
+          <nav className="mt-8 flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             {navItems.map((item) => {
               const active = currentPath === item.href;
               const Icon = item.icon;
@@ -59,7 +59,7 @@ export function AdminShellV2({
                   key={item.href}
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition",
+                    "flex shrink-0 items-center gap-3 whitespace-nowrap rounded-2xl border px-4 py-3 text-sm font-semibold transition lg:shrink lg:whitespace-normal",
                     active
                       ? "border-[#f3b89a] bg-[#fff1e7] text-[#a94b25]"
                       : "border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-white"
