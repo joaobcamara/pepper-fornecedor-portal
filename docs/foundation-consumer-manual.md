@@ -194,6 +194,13 @@ Ler em `CatalogInventory`:
 - `inventorySyncStatus`
 - `lastStockSyncAt`
 
+Regra oficial:
+
+- o saldo multiempresa e unico para o grupo e nunca deve ser somado entre Pepper, Show Look e On Shop
+- `CatalogInventory` guarda esse saldo unico oficial
+- `CatalogVariantAccountState` guarda o retrato por conta para auditoria
+- os webhooks das 3 contas servem como sinal de atualizacao, mas a confirmacao oficial da fundacao pode ser feita pela Pepper
+
 ### Imagem oficial do portal
 
 O portal nao deve consultar o Tiny em tempo de tela para decidir foto.
@@ -209,7 +216,7 @@ Ordem oficial da imagem:
 
 - webhook de `stock`, `sales` ou `orders` pode disparar hidratacao de catalogo e midia
 - se o SKU chegar sem familia completa ou sem foto confiavel, a fundacao busca o pai no Tiny em bastidor
-- a foto e a galeria ficam persistidas na fundacao para o portal nao depender do Tiny ao abrir a tela
+- a foto e a galeria ficam persistidas na fundacao e podem ser cacheadas em storage para o portal nao depender do Tiny ao abrir a tela
 
 ### Tiny ID por conta
 

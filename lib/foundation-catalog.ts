@@ -1,6 +1,11 @@
 import { InventorySyncStatus, type Prisma } from "@prisma/client";
 
 import {
+  pickPreferredCatalogImageUrl,
+  PORTAL_BRAND_FALLBACK_IMAGE,
+  resolvePortalCatalogImageUrl
+} from "@/lib/catalog-images";
+import {
   getTrustedFoundationInventoryLastSyncAt,
   getTrustedFoundationInventoryQuantity,
   getTrustedFoundationInventorySyncStatus
@@ -83,19 +88,8 @@ type SourceProductRecord = {
   syncStatus: InventorySyncStatus;
   lastSyncedAt: Date | null;
 };
-
-const PORTAL_BRAND_FALLBACK_IMAGE = "/brand/pepper-logo.png";
-
 function pickPreferredImageUrl(candidates: Array<string | null | undefined>) {
-  const normalized = candidates
-    .map((candidate) => candidate?.trim() ?? null)
-    .filter((candidate): candidate is string => Boolean(candidate));
-
-  return (
-    normalized.find((candidate) => candidate !== PORTAL_BRAND_FALLBACK_IMAGE) ??
-    normalized[0] ??
-    null
-  );
+  return pickPreferredCatalogImageUrl(candidates);
 }
 
 function getCatalogImageUrl(params: {
@@ -262,7 +256,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         sizeCode: variant.sizeCode ?? null,
         sizeLabel: variant.sizeLabel ?? getSizeLabel(variant.sizeCode),
         colorCode: variant.colorCode ?? null,
-        colorLabel: variant.colorLabel ?? getColorLabel(variant.colorCode),
+        colorLabel: variant.colorLabel ?? getColorLabel(variant.colorCode, catalogProduct.name),
         quantity,
         stockStatus: variant.inventory?.stockStatus ?? null,
         inventorySyncStatus,
@@ -270,11 +264,15 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         salePrice: variant.price?.salePrice ?? null,
         promotionalPrice: variant.price?.promotionalPrice ?? null,
         costPrice: variant.price?.costPrice ?? null,
-        imageUrl: getCatalogImageUrl({
-          sourceImageUrl: sourceProduct?.imageUrl ?? parentSource?.imageUrl ?? null,
-          variantImages: variant.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
-          productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
-          mainImageUrl: catalogProduct.mainImageUrl
+        imageUrl: resolvePortalCatalogImageUrl({
+          sku: variant.sku,
+          imageUrl: getCatalogImageUrl({
+            sourceImageUrl: sourceProduct?.imageUrl ?? parentSource?.imageUrl ?? null,
+            variantImages: variant.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
+            productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary })),
+            mainImageUrl: catalogProduct.mainImageUrl
+          }),
+          fallbackUrl: PORTAL_BRAND_FALLBACK_IMAGE
         }),
         active: variant.active,
         tinyProductId: variant.tinyProductId ?? null,
@@ -303,10 +301,14 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       sourceProductId: catalogProduct.sourceProductId ?? null,
       parentSku: catalogProduct.skuParent,
       internalName: catalogProduct.name,
-      imageUrl: getCatalogImageUrl({
-        sourceImageUrl: parentSource?.imageUrl ?? null,
-        mainImageUrl: catalogProduct.mainImageUrl,
-        productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary }))
+      imageUrl: resolvePortalCatalogImageUrl({
+        sku: catalogProduct.skuParent,
+        imageUrl: getCatalogImageUrl({
+          sourceImageUrl: parentSource?.imageUrl ?? null,
+          mainImageUrl: catalogProduct.mainImageUrl,
+          productImages: catalogProduct.images.map((image) => ({ url: image.url, isPrimary: image.isPrimary }))
+        }),
+        fallbackUrl: PORTAL_BRAND_FALLBACK_IMAGE
       }),
       active: catalogProduct.active,
       archivedAt: catalogProduct.archivedAt,

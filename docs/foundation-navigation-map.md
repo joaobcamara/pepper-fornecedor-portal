@@ -127,6 +127,8 @@ Como fazer:
 - saldo oficial consumido pelo portal = `availableMultiCompanyStock`
 - webhook de estoque = gatilho de reconciliacao
 - nao aplicar delta cego como saldo final
+- Pepper e a conta oficial para confirmar o saldo multiempresa persistido em `CatalogInventory`
+- Show Look e On Shop continuam enviando sinais e alimentando `CatalogVariantAccountState`, mas o saldo oficial nao deve somar as 3 contas
 - o portal so deve consumir saldo quando `CatalogInventory` tiver origem auditavel da fundacao nova
 - `CatalogVariantAccountState` guarda o retrato por conta; `CatalogInventory` guarda o saldo multiempresa oficial
 

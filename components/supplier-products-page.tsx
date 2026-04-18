@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, PackageSearch, RefreshCcw, Search, ShoppingCart, X } from "lucide-react";
@@ -107,6 +106,61 @@ const filters = [
   { label: "OK", value: "ok" }
 ] as const;
 
+function shortenProductTitle(value: string, words = 3) {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length <= words) {
+    return value;
+  }
+
+  return `${parts.slice(0, words).join(" ")}...`;
+}
+
+function ProductPreviewImage({
+  imageUrl,
+  alt,
+  size = "card",
+  onClick
+}: {
+  imageUrl: string;
+  alt: string;
+  size?: "card" | "hero";
+  onClick?: (() => void) | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  const resolvedImageUrl = !failed && imageUrl ? imageUrl : "/brand/pepper-logo.png";
+
+  return (
+    <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick ?? undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "relative overflow-hidden rounded-3xl border border-white/80 bg-white shadow-inner transition",
+        size === "hero" ? "h-28 w-28 cursor-zoom-in" : "h-24 w-24 cursor-zoom-in"
+      )}
+    >
+      <img
+        src={resolvedImageUrl}
+        alt={alt}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className={cn("h-full w-full", resolvedImageUrl === "/brand/pepper-logo.png" ? "object-contain p-3" : "object-cover")}
+      />
+    </div>
+  );
+}
+
 type Filter = (typeof filters)[number]["value"];
 
 export function SupplierProductsPage({
@@ -132,6 +186,7 @@ export function SupplierProductsPage({
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<Filter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -347,7 +402,7 @@ export function SupplierProductsPage({
                 <div className="mb-4 flex items-start justify-between gap-4">
                   <div className="space-y-2">
                     <p className="text-[0.7rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{product.supplier}</p>
-                    <h3 className="text-xl font-semibold text-slate-900">{product.name}</h3>
+                    <h3 className="text-xl font-semibold text-slate-900">{shortenProductTitle(product.name)}</h3>
                     <p className="text-sm text-slate-500">{product.sku}</p>
                   </div>
                   <StatusPill band={product.band} label={product.bandLabel} />
@@ -365,9 +420,11 @@ export function SupplierProductsPage({
                           {canViewProductValues ? <p>Valor total: {formatCurrency(product.inventorySaleValue)}</p> : null}
                         </div>
                       </div>
-                    <div className="relative h-16 w-16 overflow-hidden rounded-3xl border border-white/80 bg-white shadow-inner">
-                      <Image src={product.imageUrl} alt={product.name} fill className="object-contain p-2" />
-                    </div>
+                    <ProductPreviewImage
+                      imageUrl={product.imageUrl}
+                      alt={product.name}
+                      onClick={() => setPreviewImage({ src: product.imageUrl, alt: product.name })}
+                    />
                   </div>
 
                   <div className="mt-5 flex items-center justify-between text-xs font-medium text-slate-500">
@@ -419,7 +476,35 @@ export function SupplierProductsPage({
           </section>
         )}
 
-        {selected ? <ProductModal product={selected} onClose={() => setSelectedId(null)} canViewProductValues={canViewProductValues} /> : null}
+        {selected ? (
+          <ProductModal
+            product={selected}
+            onClose={() => setSelectedId(null)}
+            onPreviewImage={(src, alt) => setPreviewImage({ src, alt })}
+            canViewProductValues={canViewProductValues}
+          />
+        ) : null}
+
+        {previewImage ? (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+            <button type="button" className="absolute inset-0" onClick={() => setPreviewImage(null)} aria-label="Fechar imagem ampliada" />
+            <div className="relative z-10 max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/20 bg-white p-3 shadow-2xl">
+              <button
+                type="button"
+                onClick={() => setPreviewImage(null)}
+                className="absolute right-4 top-4 z-10 rounded-2xl border border-slate-200 bg-white/95 p-3 text-slate-500"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <img
+                src={previewImage.src}
+                alt={previewImage.alt}
+                className="max-h-[85vh] w-full rounded-[1.6rem] object-contain"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -463,10 +548,12 @@ function MetricCard({
 function ProductModal({
   product,
   onClose,
+  onPreviewImage,
   canViewProductValues
 }: {
   product: ProductCard;
   onClose: () => void;
+  onPreviewImage: (src: string, alt: string) => void;
   canViewProductValues: boolean;
 }) {
   const [note, setNote] = useState("");
@@ -475,6 +562,7 @@ function ProductModal({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const sizes = Array.from(new Set(product.matrix.flatMap((row) => row.items.map((item) => item.size))));
+  const isSingleSizeProduct = sizes.length === 1;
 
   function suggestQuantitiesWithPepperIa() {
     const suggestedQuantities = Object.fromEntries(
@@ -592,9 +680,12 @@ function ProductModal({
                     ) : null}
                   </div>
                 </div>
-                <div className="relative h-20 w-20 overflow-hidden rounded-3xl border border-white/80 bg-white">
-                  <Image src={product.imageUrl} alt={product.name} fill className="object-contain p-2" />
-                </div>
+                <ProductPreviewImage
+                  imageUrl={product.imageUrl}
+                  alt={product.name}
+                  size="hero"
+                  onClick={() => onPreviewImage(product.imageUrl, product.name)}
+                />
               </div>
 
               <ProductOperationalStrip
@@ -615,7 +706,7 @@ function ProductModal({
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <p className="text-sm font-semibold text-slate-900">{item.size}</p>
-                              <p className="text-[11px] text-slate-500">{item.sku}</p>
+                              <p className="text-[11px] text-slate-500">{row.color}</p>
                             </div>
                             <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
                           </div>
@@ -656,78 +747,132 @@ function ProductModal({
               </div>
             </div>
 
-            <div className="hidden overflow-hidden rounded-[1.7rem] border border-[#f4d7c7] lg:block">
-              <div
-                className="grid bg-[#fff7f1] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
-                style={{ gridTemplateColumns: `1.1fr repeat(${sizes.length}, minmax(0, 1fr))` }}
-              >
-                <div className="px-4 py-3">Cor</div>
-                {sizes.map((size) => (
-                  <div key={size} className="px-4 py-3 text-center">
-                    {size}
-                  </div>
-                ))}
-              </div>
-
-              {product.matrix.map((row) => (
-                <div
-                  key={row.color}
-                  className="grid border-t border-[#f8e4d9] bg-white"
-                  style={{ gridTemplateColumns: `1.1fr repeat(${sizes.length}, minmax(0, 1fr))` }}
-                >
-                  <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
-                  {sizes.map((size) => {
-                    const item = row.items.find((entry) => entry.size === size);
-
-                    return (
-                      <div key={`${row.color}-${size}`} className="px-3 py-3">
-                        {item ? (
-                          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center">
-                            <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
-                            <p className="text-[11px] text-slate-500">{item.sku}</p>
-                            <p
-                              className={cn(
-                                "mt-2 text-[11px] font-semibold",
-                                item.band === "critical" && "text-rose-700",
-                                item.band === "low" && "text-amber-700",
-                                item.band === "ok" && "text-emerald-700",
-                                item.band === "unknown" && "text-slate-500"
-                              )}
-                            >
-                              {item.status}
-                            </p>
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              critico {item.criticalStockThreshold} | baixo {item.lowStockThreshold}
-                            </p>
-                            <div className="mt-2 text-[11px] text-slate-500">
-                              <p>Hoje: {item.salesToday}</p>
-                              <p>7d: {item.sales7d}</p>
-                              <p>30d: {item.sales30d}</p>
+            <div className="hidden lg:block">
+              {isSingleSizeProduct ? (
+                <div className="space-y-4 rounded-[1.7rem] border border-[#f4d7c7] bg-white p-4">
+                  {product.matrix.map((row) => (
+                    <section key={row.color} className="rounded-[1.4rem] border border-[#f8e4d9] bg-[#fffaf6] p-4">
+                      <h3 className="text-sm font-semibold text-slate-900">{row.color}</h3>
+                      <div className="mt-4 grid grid-cols-6 gap-3">
+                        {row.items.filter(Boolean).map((item) => {
+                          const safeItem = item!;
+                          return (
+                            <div key={safeItem.sku} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center">
+                              <p className="text-lg font-semibold text-slate-900">{safeItem.quantity ?? "-"}</p>
+                              <p
+                                className={cn(
+                                  "mt-2 text-[11px] font-semibold",
+                                  safeItem.band === "critical" && "text-rose-700",
+                                  safeItem.band === "low" && "text-amber-700",
+                                  safeItem.band === "ok" && "text-emerald-700",
+                                  safeItem.band === "unknown" && "text-slate-500"
+                                )}
+                              >
+                                {safeItem.status}
+                              </p>
+                              <p className="mt-1 text-[11px] text-slate-400">
+                                critico {safeItem.criticalStockThreshold} | baixo {safeItem.lowStockThreshold}
+                              </p>
+                              <div className="mt-2 text-[11px] text-slate-500">
+                                <p>Hoje: {safeItem.salesToday}</p>
+                                <p>7d: {safeItem.sales7d}</p>
+                                <p>30d: {safeItem.sales30d}</p>
+                              </div>
+                              <input
+                                type="number"
+                                min={0}
+                                value={quantities[safeItem.sku] ?? ""}
+                                onChange={(event) =>
+                                  setQuantities((current) => ({
+                                    ...current,
+                                    [safeItem.sku]: Number(event.target.value || 0)
+                                  }))
+                                }
+                                className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm outline-none"
+                                placeholder="Sugerir"
+                              />
                             </div>
-                            <input
-                              type="number"
-                              min={0}
-                              value={quantities[item.sku] ?? ""}
-                              onChange={(event) =>
-                                setQuantities((current) => ({
-                                  ...current,
-                                  [item.sku]: Number(event.target.value || 0)
-                                }))
-                              }
-                              className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm outline-none"
-                              placeholder="Sugerir"
-                            />
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-300">
-                            -
-                          </div>
-                        )}
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </section>
+                  ))}
                 </div>
-              ))}
+              ) : (
+                <div className="overflow-hidden rounded-[1.7rem] border border-[#f4d7c7]">
+                  <div
+                    className="grid bg-[#fff7f1] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    style={{ gridTemplateColumns: `1.1fr repeat(${sizes.length}, minmax(0, 1fr))` }}
+                  >
+                    <div className="px-4 py-3">Cor</div>
+                    {sizes.map((size) => (
+                      <div key={size} className="px-4 py-3 text-center">
+                        {size}
+                      </div>
+                    ))}
+                  </div>
+
+                  {product.matrix.map((row) => (
+                    <div
+                      key={row.color}
+                      className="grid border-t border-[#f8e4d9] bg-white"
+                      style={{ gridTemplateColumns: `1.1fr repeat(${sizes.length}, minmax(0, 1fr))` }}
+                    >
+                      <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
+                      {sizes.map((size) => {
+                        const item = row.items.find((entry) => entry.size === size);
+
+                        return (
+                          <div key={`${row.color}-${size}`} className="px-3 py-3">
+                            {item ? (
+                              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center">
+                                <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+                                <p className="text-[11px] text-slate-500">{row.color}</p>
+                                <p
+                                  className={cn(
+                                    "mt-2 text-[11px] font-semibold",
+                                    item.band === "critical" && "text-rose-700",
+                                    item.band === "low" && "text-amber-700",
+                                    item.band === "ok" && "text-emerald-700",
+                                    item.band === "unknown" && "text-slate-500"
+                                  )}
+                                >
+                                  {item.status}
+                                </p>
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  critico {item.criticalStockThreshold} | baixo {item.lowStockThreshold}
+                                </p>
+                                <div className="mt-2 text-[11px] text-slate-500">
+                                  <p>Hoje: {item.salesToday}</p>
+                                  <p>7d: {item.sales7d}</p>
+                                  <p>30d: {item.sales30d}</p>
+                                </div>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={quantities[item.sku] ?? ""}
+                                  onChange={(event) =>
+                                    setQuantities((current) => ({
+                                      ...current,
+                                      [item.sku]: Number(event.target.value || 0)
+                                    }))
+                                  }
+                                  className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm outline-none"
+                                  placeholder="Sugerir"
+                                />
+                              </div>
+                            ) : (
+                              <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-300">
+                                -
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

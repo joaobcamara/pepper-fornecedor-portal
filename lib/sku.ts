@@ -65,12 +65,67 @@ export function getSizeLabel(code?: string | null) {
   return SIZE_MAP[code] ?? code;
 }
 
-export function getColorLabel(code?: string | null) {
+function getColorComplementLabel(code: string, productName?: string | null) {
+  if (code.length <= 2) {
+    return null;
+  }
+
+  const complement = code.slice(-2);
+  const normalizedName = productName?.trim().toLowerCase() ?? "";
+
+  if (complement === "80") {
+    if (normalizedName.includes("calcinha")) {
+      return "Fio dental";
+    }
+
+    if (
+      normalizedName.includes("cinta") ||
+      normalizedName.includes("corpete") ||
+      normalizedName.includes("barbatana")
+    ) {
+      return "4 Barbatanas";
+    }
+  }
+
+  if (complement === "81") {
+    if (normalizedName.includes("calcinha")) {
+      return "Tradicional";
+    }
+
+    if (
+      normalizedName.includes("cinta") ||
+      normalizedName.includes("corpete") ||
+      normalizedName.includes("barbatana")
+    ) {
+      return "12 Barbatanas";
+    }
+  }
+
+  return null;
+}
+
+export function getColorLabel(code?: string | null, productName?: string | null) {
   if (!code) {
     return "Sem cor";
   }
   const normalized = normalizeSku(code);
-  return COLOR_MAP[normalized] ?? normalized;
+  const direct = COLOR_MAP[normalized];
+
+  if (direct) {
+    return direct;
+  }
+
+  if (normalized.length > 2) {
+    const baseColorCode = normalized.slice(0, 2);
+    const baseColor = COLOR_MAP[baseColorCode];
+    const complementLabel = getColorComplementLabel(normalized, productName);
+
+    if (baseColor && complementLabel) {
+      return `${baseColor} ${complementLabel}`;
+    }
+  }
+
+  return normalized;
 }
 
 export function formatVariantLabel(color?: string | null, size?: string | null) {

@@ -1,4 +1,5 @@
 import { getDemoAdminPageData } from "@/lib/demo-data";
+import { buildCatalogProductImageProxyUrl, PORTAL_BRAND_FALLBACK_IMAGE } from "@/lib/catalog-images";
 import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
 import { getLocalAdminDashboardData } from "@/lib/local-dashboard-data";
@@ -447,7 +448,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         id: product.sourceProductId ?? product.id,
         parentSku: product.parentSku,
         internalName: product.internalName,
-        imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
+        imageUrl: product.imageUrl ?? PORTAL_BRAND_FALLBACK_IMAGE,
         active: product.portalVisible,
         criticalStockThreshold: product.variants[0]?.parentCriticalStockThreshold ?? null,
         lowStockThreshold: product.variants[0]?.parentLowStockThreshold ?? null,
@@ -560,7 +561,9 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         name: catalogProduct.name,
         sku: catalogProduct.skuParent,
         supplierName,
-        imageUrl: catalogProduct.mainImageUrl ?? "/brand/pepper-logo.png",
+        imageUrl: catalogProduct.mainImageUrl
+          ? buildCatalogProductImageProxyUrl(catalogProduct.skuParent, PORTAL_BRAND_FALLBACK_IMAGE)
+          : PORTAL_BRAND_FALLBACK_IMAGE,
         unitsSold,
         revenue,
         stock,

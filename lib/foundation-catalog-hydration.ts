@@ -2,6 +2,7 @@ import { InventorySyncStatus, ProductKind } from "@prisma/client";
 
 import { syncCatalogProductByParentSku } from "@/lib/catalog-sync";
 import { createFoundationSyncRun, finalizeFoundationSyncRun } from "@/lib/foundation-event-orchestrator";
+import { cacheRemoteImage } from "@/lib/local-files";
 import { prisma } from "@/lib/prisma";
 import { getParentSku, normalizeSku, parseSku } from "@/lib/sku";
 import {
@@ -33,6 +34,30 @@ export type FoundationCatalogHydrationResult = {
 
 function hasUsableImage(url: string | null | undefined) {
   return Boolean(url && url.trim() && url !== PORTAL_BRAND_FALLBACK_IMAGE);
+}
+
+async function cacheTinyCatalogImages(params: {
+  urls: string[];
+  parentSku: string;
+  folder: string;
+}) {
+  const uniqueUrls = Array.from(new Set(params.urls.filter((url) => hasUsableImage(url))));
+  const results: string[] = [];
+
+  for (let index = 0; index < uniqueUrls.length; index += 1) {
+    const sourceUrl = uniqueUrls[index]!;
+    const cached = await cacheRemoteImage({
+      url: sourceUrl,
+      folder: params.folder,
+      prefix: `${params.parentSku}-${String(index + 1).padStart(2, "0")}`
+    });
+
+    if (cached) {
+      results.push(cached);
+    }
+  }
+
+  return results;
 }
 
 async function findCatalogHydrationNeed(params: {
@@ -133,7 +158,16 @@ async function upsertOperationalFamilyFromTiny(params: {
 
   const parentRaw = await getTinyProductById(inspection.parent.id, params.accountKey);
   const parentImageUrls = extractImageUrls(parentRaw);
-  const primaryParentImage = parentImageUrls[0] ?? inspection.parent.imageUrl ?? null;
+  const cachedParentImageUrls = await cacheTinyCatalogImages({
+    urls: parentImageUrls.length > 0 ? parentImageUrls : [inspection.parent.imageUrl ?? ""],
+    parentSku: inspection.parent.sku,
+    folder: "uploads/foundation/catalog"
+  });
+  const primaryParentImage =
+    cachedParentImageUrls[0] ??
+    parentImageUrls[0] ??
+    inspection.parent.imageUrl ??
+    null;
 
   const existingParent = await prisma.product.findUnique({
     where: {
@@ -183,7 +217,20 @@ async function upsertOperationalFamilyFromTiny(params: {
         sku: variant.sku
       }
     });
-    const ownVariantImage = variant.imageUrl && variant.imageUrl !== primaryParentImage ? variant.imageUrl : null;
+    const cachedVariantImage =
+      variant.imageUrl && variant.imageUrl !== inspection.parent.imageUrl
+        ? await cacheRemoteImage({
+            url: variant.imageUrl,
+            folder: "uploads/foundation/catalog",
+            prefix: variant.sku
+          })
+        : null;
+    const ownVariantImage =
+      cachedVariantImage && cachedVariantImage !== primaryParentImage
+        ? cachedVariantImage
+        : variant.imageUrl && variant.imageUrl !== primaryParentImage
+          ? variant.imageUrl
+          : null;
 
     await prisma.product.upsert({
       where: {
@@ -245,7 +292,7 @@ async function upsertOperationalFamilyFromTiny(params: {
     preserveInventory: true
   });
 
-  if (catalogProductId) {
+    if (catalogProductId) {
     await prisma.catalogProduct.update({
       where: {
         id: catalogProductId
@@ -263,7 +310,7 @@ async function upsertOperationalFamilyFromTiny(params: {
       }
     });
 
-    const extraGalleryUrls = parentImageUrls.filter((url) => url !== primaryParentImage);
+    const extraGalleryUrls = cachedParentImageUrls.filter((url) => url !== primaryParentImage);
     if (extraGalleryUrls.length > 0) {
       await prisma.catalogImage.createMany({
         data: extraGalleryUrls.map((url, index) => ({
@@ -293,9 +340,9 @@ async function upsertOperationalFamilyFromTiny(params: {
       }
     });
 
-    if (parentImageUrls.length > 0) {
+    if (cachedParentImageUrls.length > 0) {
       await prisma.foundationAsset.createMany({
-        data: parentImageUrls.map((url, index) => ({
+        data: cachedParentImageUrls.map((url, index) => ({
           ownerDomain: "catalog",
           ownerEntityType: "catalog_product",
           ownerEntityId: catalogProductId,
@@ -306,7 +353,7 @@ async function upsertOperationalFamilyFromTiny(params: {
           extension: url.split(".").pop() ?? null,
           url,
           previewUrl: url,
-          originalUrl: url,
+          originalUrl: parentImageUrls[index] ?? url,
           isPrimary: index === 0,
           sortOrder: index,
           metadataJson: JSON.stringify({

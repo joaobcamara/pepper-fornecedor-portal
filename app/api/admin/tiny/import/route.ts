@@ -4,6 +4,7 @@ import {
   ensureFoundationProductSupplierLinks,
   inspectFoundationProductBySku
 } from "@/lib/foundation-product-inspection";
+import { tryHydrateFoundationCatalogBySku } from "@/lib/foundation-catalog-hydration";
 import { importLocalTinyProduct } from "@/lib/local-operations-store";
 import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
@@ -108,6 +109,12 @@ export async function POST(request: Request) {
           "A importacao do Tiny demorou alem da janela segura definida para a fundacao. Revise a familia do SKU e, se for uma familia grande, siga a importacao por etapas."
       }
     );
+
+    await tryHydrateFoundationCatalogBySku({
+      sku: result.parentSku,
+      triggerType: "admin_import_catalog_media",
+      reason: "ensure_media"
+    });
 
     return NextResponse.json({
       ...result,

@@ -97,7 +97,7 @@ export async function syncCatalogProductByParentSku(
     parent.variants.map((variant) => getSizeLabel(variant.sizeCode))
   );
   const availableColors = getDistinct(
-    parent.variants.map((variant) => getColorLabel(variant.colorCode))
+    parent.variants.map((variant) => getColorLabel(variant.colorCode, parent.internalName))
   );
 
   const parentAi = buildCatalogAiPackage({
@@ -160,29 +160,9 @@ export async function syncCatalogProductByParentSku(
         }
       });
 
-  const supplierIds = getDistinct([
-    ...parent.assignments
-      .filter((assignment) => assignment.active)
-      .map((assignment) => assignment.supplierId),
-    ...parent.variants.flatMap((variant) =>
-      variant.assignments
-        .filter((assignment) => assignment.active)
-        .map((assignment) => assignment.supplierId)
-      )
-  ]);
-
-  await db.catalogProductSupplier.deleteMany({
-    where: { catalogProductId: catalogProduct.id }
-  });
-
-  if (supplierIds.length > 0) {
-    await db.catalogProductSupplier.createMany({
-      data: supplierIds.map((supplierId) => ({
-        catalogProductId: catalogProduct.id,
-        supplierId
-      }))
-    });
-  }
+  // O vinculo oficial produto-fornecedor vive na fundacao via CatalogProductSupplier
+  // e e gerenciado manualmente pelo admin. Nao replicamos mais atribuicoes
+  // operacionais legadas para evitar auto-vinculo de novos produtos.
 
   await db.catalogImage.deleteMany({
     where: {
@@ -249,7 +229,7 @@ export async function syncCatalogProductByParentSku(
       productName: parent.internalName,
       skuParent: parent.sku,
       sku: variant.sku,
-      colorLabel: getColorLabel(variant.colorCode),
+      colorLabel: getColorLabel(variant.colorCode, parent.internalName),
       sizeLabel: getSizeLabel(variant.sizeCode),
       availableSizes,
       availableColors,
@@ -274,7 +254,7 @@ export async function syncCatalogProductByParentSku(
             sizeCode: variant.sizeCode,
             sizeLabel: getSizeLabel(variant.sizeCode),
             colorCode: variant.colorCode,
-            colorLabel: getColorLabel(variant.colorCode),
+            colorLabel: getColorLabel(variant.colorCode, parent.internalName),
             salesContextAi: variantAi.salesContextAi,
             searchText: variantAi.searchText,
             intentTags: variantAi.intentTags,
@@ -292,7 +272,7 @@ export async function syncCatalogProductByParentSku(
             sizeCode: variant.sizeCode,
             sizeLabel: getSizeLabel(variant.sizeCode),
             colorCode: variant.colorCode,
-            colorLabel: getColorLabel(variant.colorCode),
+            colorLabel: getColorLabel(variant.colorCode, parent.internalName),
             salesContextAi: variantAi.salesContextAi,
             searchText: variantAi.searchText,
             intentTags: variantAi.intentTags,

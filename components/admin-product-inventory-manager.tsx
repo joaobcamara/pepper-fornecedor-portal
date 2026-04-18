@@ -155,6 +155,15 @@ function bandBadgeTone(band: ProductGroup["band"] | VariantRow["band"]) {
   return "bg-slate-100 text-slate-600";
 }
 
+function shortenProductTitle(value: string, words = 3) {
+  const parts = value.trim().split(/\s+/);
+  if (parts.length <= words) {
+    return value;
+  }
+
+  return `${parts.slice(0, words).join(" ")}...`;
+}
+
 function describeSalesRhythm(params: { sales7d: number; sales15d: number; sales30d: number }) {
   const pace7d = params.sales7d / 7;
   const pace15d = params.sales15d / 15;
@@ -195,23 +204,44 @@ function ProductReferenceThumbnail({
   imageUrl,
   alt,
   sku,
-  size = "card"
+  size = "card",
+  onClick
 }: {
   imageUrl: string;
   alt: string;
   sku: string;
-  size?: "card" | "hero";
+  size?: "card" | "hero" | "panel";
+  onClick?: (() => void) | null;
 }) {
   const [failed, setFailed] = useState(false);
   const resolvedImageUrl = !failed && imageUrl ? imageUrl : "/brand/pepper-logo.png";
   const fallback = isBrandFallbackImage(resolvedImageUrl);
-  const dimensionClassName = size === "hero" ? "h-24 w-24 rounded-[1.75rem]" : "h-20 w-20 rounded-[1.5rem]";
+  const dimensionClassName =
+    size === "hero"
+      ? "h-32 w-32 rounded-[2rem]"
+      : size === "panel"
+        ? "h-28 w-28 rounded-[1.85rem]"
+        : "h-28 w-28 rounded-[1.85rem]";
 
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick ?? undefined}
+      onKeyDown={
+        onClick
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       className={cn(
-        "relative shrink-0 overflow-hidden border shadow-inner",
+        "relative shrink-0 overflow-hidden border shadow-inner transition",
         dimensionClassName,
+        onClick ? "cursor-zoom-in hover:scale-[1.02]" : "cursor-default",
         fallback ? "border-[#f3d5c3] bg-[#fff7f1]" : "border-white/80 bg-white"
       )}
     >
@@ -224,16 +254,13 @@ function ProductReferenceThumbnail({
         onError={() => setFailed(true)}
         className={cn("h-full w-full", fallback ? "object-contain p-3" : "object-cover")}
       />
-      <div className="absolute inset-x-2 bottom-2">
-        <span
-          className={cn(
-            "inline-flex max-w-full items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
-            fallback ? "bg-white/92 text-[#b25a31]" : "bg-slate-950/72 text-white"
-          )}
-        >
-          {fallback ? `Ref. ${sku}` : "Foto de referencia"}
-        </span>
-      </div>
+      {fallback ? (
+        <div className="absolute inset-x-3 bottom-3">
+          <span className="inline-flex items-center rounded-full bg-white/92 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#b25a31]">
+            {sku}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -286,6 +313,7 @@ export function AdminProductInventoryManager({
   const [selectedSku, setSelectedSku] = useState<string | null>(
     initialSelectedSku && productGroups.some((group) => group.parentSku === initialSelectedSku) ? initialSelectedSku : null
   );
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -367,6 +395,8 @@ export function AdminProductInventoryManager({
       )
     }));
   }, [selectedGroup, sizes]);
+
+  const isSingleSizeGroup = sizes.length === 1;
 
   const selectableSuppliers = useMemo(() => {
     if (!selectedDraft || selectedDraft.supplierIds.length === 0) {
@@ -878,17 +908,26 @@ export function AdminProductInventoryManager({
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{group.parentSku}</p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">{group.internalName}</h3>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">{shortenProductTitle(group.internalName)}</h3>
                   <p className="mt-1 text-sm text-slate-500">
                     {group.variantCount} variacoes • estoque total {group.totalStock}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
                     <span className="rounded-full bg-white/80 px-3 py-1">Atualizado {group.updatedAt}</span>
-                    <span className="rounded-full bg-white/80 px-3 py-1">{group.suppliers.length} fornecedores ligados</span>
+                    {group.suppliers.length > 0 ? (
+                      <span className="rounded-full bg-white/80 px-3 py-1">
+                        {group.suppliers.map((supplier) => supplier.name).join(" • ")}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
-                <ProductReferenceThumbnail imageUrl={group.imageUrl} alt={group.internalName} sku={group.parentSku} />
+                <ProductReferenceThumbnail
+                  imageUrl={group.imageUrl}
+                  alt={group.internalName}
+                  sku={group.parentSku}
+                  onClick={() => setPreviewImage({ src: group.imageUrl, alt: group.internalName })}
+                />
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
@@ -961,6 +1000,7 @@ export function AdminProductInventoryManager({
                   alt={selectedGroup.internalName}
                   sku={selectedGroup.parentSku}
                   size="hero"
+                  onClick={() => setPreviewImage({ src: selectedGroup.imageUrl, alt: selectedGroup.internalName })}
                 />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Gestor de produto e estoque</p>
@@ -1295,7 +1335,7 @@ export function AdminProductInventoryManager({
                                 <div>
                                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{sizes[index]}</p>
                                   <p className="mt-2 text-xl font-semibold text-slate-900">{item.quantity ?? "-"}</p>
-                                  <p className="text-[11px] text-slate-500">{item.sku}</p>
+                                  <p className="text-[11px] text-slate-500">{row.color}</p>
                                 </div>
                                 <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
                                   {item.band === "critical" ? "Critico" : item.band === "low" ? "Baixo" : item.band === "ok" ? "Saudavel" : "Sem leitura"}
@@ -1360,113 +1400,217 @@ export function AdminProductInventoryManager({
                 </div>
 
                 <div className="mt-5 hidden xl:block">
-                  <div className="overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
-                    <div
-                      className="grid bg-[#fff3ec] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
-                      style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
-                    >
-                      <div className="px-4 py-3">Cor</div>
-                      {sizes.map((size) => (
-                        <div key={size} className="px-4 py-3 text-center">
-                          {size}
-                        </div>
+                  {isSingleSizeGroup ? (
+                    <div className="space-y-4 rounded-[1.4rem] border border-[#f4d7c7] bg-white p-4">
+                      {matrix.map((row) => (
+                        <section key={row.color} className="rounded-[1.4rem] border border-[#f8e4d9] bg-[#fffaf6] p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <h5 className="text-base font-semibold text-slate-900">{row.color}</h5>
+                            <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a94c25]">
+                              {sizes[0] ?? "Unico"}
+                            </span>
+                          </div>
+                          <div className="mt-4 grid grid-cols-6 gap-3">
+                            {row.items.filter(Boolean).map((item) => {
+                              const safeItem = item!;
+                              const variantDraft = selectedDraft.variants[safeItem.sku];
+
+                              return (
+                                <div key={safeItem.sku} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-lg font-semibold text-slate-900">{safeItem.quantity ?? "-"}</p>
+                                      <p className="text-[11px] text-slate-500">{row.color}</p>
+                                    </div>
+                                    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(safeItem.band))}>
+                                      {safeItem.band === "critical" ? "Critico" : safeItem.band === "low" ? "Baixo" : safeItem.band === "ok" ? "Saudavel" : "Sem leitura"}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                    <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {safeItem.sales[activePeriod]}</div>
+                                    <div className="rounded-xl bg-white px-3 py-2">Custo base: {formatCurrency(safeItem.unitCost ?? 0)}</div>
+                                  </div>
+                                  <div className="mt-3 grid gap-2">
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={variantDraft?.criticalStockThreshold ?? ""}
+                                        onChange={(event) =>
+                                          updateVariantDraft(selectedGroup.parentSku, safeItem.sku, "criticalStockThreshold", event.target.value)
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder={`Padrao ${selectedDraft.criticalStockThreshold || safeItem.effectiveCriticalStockThreshold}`}
+                                      />
+                                    </label>
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={variantDraft?.lowStockThreshold ?? ""}
+                                        onChange={(event) =>
+                                          updateVariantDraft(selectedGroup.parentSku, safeItem.sku, "lowStockThreshold", event.target.value)
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder={`Padrao ${selectedDraft.lowStockThreshold || safeItem.effectiveLowStockThreshold}`}
+                                      />
+                                    </label>
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={orderQuantities[safeItem.sku] ?? ""}
+                                        onChange={(event) =>
+                                          setOrderQuantities((current) => ({
+                                            ...current,
+                                            [safeItem.sku]: Number(event.target.value || 0)
+                                          }))
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder="Qtd"
+                                      />
+                                    </label>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </section>
                       ))}
                     </div>
-
-                    {matrix.map((row) => (
+                  ) : (
+                    <div className="overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
                       <div
-                        key={row.color}
-                        className="grid border-t border-[#f8e4d9] bg-white"
+                        className="grid bg-[#fff3ec] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
                         style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
                       >
-                        <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
-                        {row.items.map((item, index) => {
-                          if (!item) {
+                        <div className="px-4 py-3">Cor</div>
+                        {sizes.map((size) => (
+                          <div key={size} className="px-4 py-3 text-center">
+                            {size}
+                          </div>
+                        ))}
+                      </div>
+
+                      {matrix.map((row) => (
+                        <div
+                          key={row.color}
+                          className="grid border-t border-[#f8e4d9] bg-white"
+                          style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
+                        >
+                          <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
+                          {row.items.map((item, index) => {
+                            if (!item) {
+                              return (
+                                <div key={`${row.color}-${sizes[index]}`} className="px-3 py-3">
+                                  <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-300">
+                                    -
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            const variantDraft = selectedDraft.variants[item.sku];
+
                             return (
-                              <div key={`${row.color}-${sizes[index]}`} className="px-3 py-3">
-                                <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-300">
-                                  -
+                              <div key={item.sku} className="px-3 py-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+                                      <p className="text-[11px] text-slate-500">{row.color}</p>
+                                    </div>
+                                    <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
+                                      {item.band === "critical" ? "Critico" : item.band === "low" ? "Baixo" : item.band === "ok" ? "Saudavel" : "Sem leitura"}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                                    <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {item.sales[activePeriod]}</div>
+                                    <div className="rounded-xl bg-white px-3 py-2">
+                                      Custo base: {formatCurrency(item.unitCost ?? 0)}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-3 grid gap-2">
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={variantDraft?.criticalStockThreshold ?? ""}
+                                        onChange={(event) =>
+                                          updateVariantDraft(selectedGroup.parentSku, item.sku, "criticalStockThreshold", event.target.value)
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder={`Padrao ${selectedDraft.criticalStockThreshold || item.effectiveCriticalStockThreshold}`}
+                                      />
+                                    </label>
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={variantDraft?.lowStockThreshold ?? ""}
+                                        onChange={(event) =>
+                                          updateVariantDraft(selectedGroup.parentSku, item.sku, "lowStockThreshold", event.target.value)
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder={`Padrao ${selectedDraft.lowStockThreshold || item.effectiveLowStockThreshold}`}
+                                      />
+                                    </label>
+                                    <label className="block">
+                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        value={orderQuantities[item.sku] ?? ""}
+                                        onChange={(event) =>
+                                          setOrderQuantities((current) => ({
+                                            ...current,
+                                            [item.sku]: Number(event.target.value || 0)
+                                          }))
+                                        }
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+                                        placeholder="Qtd"
+                                      />
+                                    </label>
+                                  </div>
                                 </div>
                               </div>
                             );
-                          }
-
-                          const variantDraft = selectedDraft.variants[item.sku];
-
-                          return (
-                            <div key={item.sku} className="px-3 py-3">
-                              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
-                                    <p className="text-[11px] text-slate-500">{item.sku}</p>
-                                  </div>
-                                  <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
-                                    {item.band === "critical" ? "Critico" : item.band === "low" ? "Baixo" : item.band === "ok" ? "Saudavel" : "Sem leitura"}
-                                  </span>
-                                </div>
-
-                                <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                                  <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {item.sales[activePeriod]}</div>
-                                  <div className="rounded-xl bg-white px-3 py-2">
-                                    Custo base: {formatCurrency(item.unitCost ?? 0)}
-                                  </div>
-                                </div>
-
-                                <div className="mt-3 grid gap-2">
-                                  <label className="block">
-                                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={variantDraft?.criticalStockThreshold ?? ""}
-                                      onChange={(event) =>
-                                        updateVariantDraft(selectedGroup.parentSku, item.sku, "criticalStockThreshold", event.target.value)
-                                      }
-                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                      placeholder={`Padrao ${selectedDraft.criticalStockThreshold || item.effectiveCriticalStockThreshold}`}
-                                    />
-                                  </label>
-                                  <label className="block">
-                                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={variantDraft?.lowStockThreshold ?? ""}
-                                      onChange={(event) =>
-                                        updateVariantDraft(selectedGroup.parentSku, item.sku, "lowStockThreshold", event.target.value)
-                                      }
-                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                      placeholder={`Padrao ${selectedDraft.lowStockThreshold || item.effectiveLowStockThreshold}`}
-                                    />
-                                  </label>
-                                  <label className="block">
-                                    <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={orderQuantities[item.sku] ?? ""}
-                                      onChange={(event) =>
-                                        setOrderQuantities((current) => ({
-                                          ...current,
-                                          [item.sku]: Number(event.target.value || 0)
-                                        }))
-                                      }
-                                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                      placeholder="Qtd"
-                                    />
-                                  </label>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-                  </div>
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewImage ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <button type="button" className="absolute inset-0" onClick={() => setPreviewImage(null)} aria-label="Fechar imagem ampliada" />
+          <div className="relative z-10 max-h-[92vh] w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/20 bg-white p-3 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="absolute right-4 top-4 z-10 rounded-2xl border border-slate-200 bg-white/95 p-3 text-slate-500"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <img
+              src={previewImage.src}
+              alt={previewImage.alt}
+              className="max-h-[85vh] w-full rounded-[1.6rem] object-contain"
+              referrerPolicy="no-referrer"
+            />
           </div>
         </div>
       ) : null}

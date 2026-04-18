@@ -19,6 +19,7 @@ Definir a configuracao correta dos webhooks das 3 contas Tiny para a fundacao Gr
 - saldo oficial consumido pelo portal = `saldo multiempresa`
 - qualquer webhook de estoque das 3 contas deve virar reconciliacao do saldo multiempresa
 - Pepper continua como matriz de governanca, balanco e operacao fisica principal
+- Pepper pode ser tratada como conta oficial para confirmar o saldo multiempresa persistido na fundacao
 - notas fiscais entram depois para enriquecer dominio fiscal/logistico, nao para decidir sozinhas o saldo oficial
 
 ## Rotas oficiais atualmente disponiveis
@@ -128,7 +129,7 @@ A rota `/api/tiny/webhooks/stock` trata o payload como sinal de reconciliacao.
 Isso significa:
 
 - webhook de estoque nao aplica delta cego na fundacao
-- a fundacao usa a conta de origem e o SKU/ID recebidos para reconsultar o saldo atualizado no Tiny
+- a fundacao usa o sinal recebido para localizar o SKU/ID e reconsulta o saldo multiempresa oficial; quando houver duvida, Pepper e a conta de confirmacao
 - o valor persistido em `CatalogInventory` passa a ser sempre o saldo multiempresa reconsultado
 - `CatalogVariantAccountState` passa a registrar o retrato por conta a cada reconciliacao valida
 - se o evento vier de `Show Look` ou `On Shop` sem contexto comercial, ele continua sendo marcado como `anomalia`, mas a reconciliacao do saldo acontece do mesmo jeito

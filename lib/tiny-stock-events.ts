@@ -285,19 +285,28 @@ async function refreshFoundationInventoryFromTinySignal(params: {
   sku?: string | null;
   tinyProductId?: string | null;
 }) {
-  const refreshProductId = await resolveTinyProductIdForStockRefresh(params);
+  const authoritativeAccountKey = getPepperPhysicalStockAccountKey();
+  const refreshProductId =
+    (await resolveTinyProductIdForStockRefresh({
+      ...params,
+      accountKey: authoritativeAccountKey
+    })) ??
+    (params.accountKey === authoritativeAccountKey
+      ? null
+      : await resolveTinyProductIdForStockRefresh(params));
 
   if (!refreshProductId) {
     throw new Error(
-      `Nao foi possivel localizar o produto Tiny da conta ${getPepperTinyAccountLabel(params.accountKey)} para reconciliar o saldo pela fundacao.`
+      `Nao foi possivel localizar o produto Tiny da conta ${getPepperTinyAccountLabel(authoritativeAccountKey)} para reconciliar o saldo multiempresa oficial da fundacao.`
     );
   }
 
-  const quantity = await getTinyStockByProductId(refreshProductId, params.accountKey);
+  const quantity = await getTinyStockByProductId(refreshProductId, authoritativeAccountKey);
 
   return {
     quantity,
-    tinyProductId: refreshProductId
+    tinyProductId: refreshProductId,
+    authoritativeAccountKey
   };
 }
 
@@ -306,7 +315,8 @@ export async function persistFoundationVariantInventory(params: {
   quantity: number | null;
   syncStatus: InventorySyncStatus;
   syncedAt: Date;
-  sourceAccountKey?: TinyAccountKey | null;
+  authoritativeAccountKey?: TinyAccountKey | null;
+  signalAccountKey?: TinyAccountKey | null;
   reconciledTinyProductId?: string | null;
   rawPayload?: string | null;
   localSignalQuantity?: number | null;
@@ -325,10 +335,12 @@ export async function persistFoundationVariantInventory(params: {
   });
 
   const stockBand = getStockBand(params.quantity, thresholds);
+  const targetCatalogVariantId = target.catalogVariantId;
+  const targetSku = target.sku;
 
   await prisma.catalogInventory.upsert({
     where: {
-      catalogVariantId: target.catalogVariantId
+      catalogVariantId: targetCatalogVariantId
     },
     update: {
       availableMultiCompanyStock: params.quantity,
@@ -336,35 +348,35 @@ export async function persistFoundationVariantInventory(params: {
       inventorySyncStatus: params.syncStatus,
       lastStockSyncAt: params.syncedAt,
       source: "tiny",
-      sourceAccountKey: params.sourceAccountKey ?? null,
+      sourceAccountKey: params.authoritativeAccountKey ?? params.signalAccountKey ?? null,
       lastReconciledTinyId: params.reconciledTinyProductId ?? null,
       rawPayload: params.rawPayload ?? null
     },
     create: {
-      catalogVariantId: target.catalogVariantId,
+      catalogVariantId: targetCatalogVariantId,
       availableMultiCompanyStock: params.quantity,
       stockStatus: stockBand,
       inventorySyncStatus: params.syncStatus,
       lastStockSyncAt: params.syncedAt,
       source: "tiny",
-      sourceAccountKey: params.sourceAccountKey ?? null,
+      sourceAccountKey: params.authoritativeAccountKey ?? params.signalAccountKey ?? null,
       lastReconciledTinyId: params.reconciledTinyProductId ?? null,
       rawPayload: params.rawPayload ?? null
     }
   });
 
-  if (params.sourceAccountKey) {
+  async function upsertAccountState(accountKey: TinyAccountKey, localAvailableStock: number | null) {
     await prisma.catalogVariantAccountState.upsert({
       where: {
         catalogVariantId_accountKey: {
-          catalogVariantId: target.catalogVariantId,
-          accountKey: params.sourceAccountKey
+          catalogVariantId: targetCatalogVariantId,
+          accountKey
         }
       },
       update: {
-        sku: target.sku,
+        sku: targetSku,
         tinyProductId: params.reconciledTinyProductId ?? null,
-        localAvailableStock: params.localSignalQuantity ?? null,
+        localAvailableStock,
         availableMultiCompanyStock: params.quantity,
         inventorySyncStatus: params.syncStatus,
         lastStockSyncAt: params.syncedAt,
@@ -372,11 +384,11 @@ export async function persistFoundationVariantInventory(params: {
         rawPayload: params.rawPayload ?? null
       },
       create: {
-        catalogVariantId: target.catalogVariantId,
-        accountKey: params.sourceAccountKey,
-        sku: target.sku,
+        catalogVariantId: targetCatalogVariantId,
+        accountKey,
+        sku: targetSku,
         tinyProductId: params.reconciledTinyProductId ?? null,
-        localAvailableStock: params.localSignalQuantity ?? null,
+        localAvailableStock,
         availableMultiCompanyStock: params.quantity,
         inventorySyncStatus: params.syncStatus,
         lastStockSyncAt: params.syncedAt,
@@ -384,6 +396,20 @@ export async function persistFoundationVariantInventory(params: {
         rawPayload: params.rawPayload ?? null
       }
     });
+  }
+
+  if (params.authoritativeAccountKey) {
+    await upsertAccountState(
+      params.authoritativeAccountKey,
+      params.authoritativeAccountKey === params.signalAccountKey ? params.localSignalQuantity ?? params.quantity : null
+    );
+  }
+
+  if (
+    params.signalAccountKey &&
+    params.signalAccountKey !== params.authoritativeAccountKey
+  ) {
+    await upsertAccountState(params.signalAccountKey, params.localSignalQuantity ?? null);
   }
 
   if (target.sourceProductId) {
@@ -554,7 +580,8 @@ export async function handleTinyStockWebhook(
       quantity: finalQuantity,
       syncStatus: finalQuantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
       syncedAt: processedAt,
-      sourceAccountKey: accountKey,
+      authoritativeAccountKey: reconciledQuantity?.authoritativeAccountKey ?? getPepperPhysicalStockAccountKey(),
+      signalAccountKey: accountKey,
       reconciledTinyProductId: reconciledQuantity?.tinyProductId ?? tinyProductId,
       rawPayload: JSON.stringify(rawPayload),
       localSignalQuantity: quantity
@@ -737,7 +764,7 @@ export async function reconcileVariantInventory(params: {
           quantity,
           syncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
           syncedAt: new Date(),
-          sourceAccountKey: getPepperPhysicalStockAccountKey(),
+          authoritativeAccountKey: getPepperPhysicalStockAccountKey(),
           reconciledTinyProductId: refreshProductId
         });
         updated += 1;
@@ -748,7 +775,7 @@ export async function reconcileVariantInventory(params: {
           quantity: fallbackQuantity,
           syncStatus: InventorySyncStatus.ERROR,
           syncedAt: new Date(),
-          sourceAccountKey: getPepperPhysicalStockAccountKey()
+          authoritativeAccountKey: getPepperPhysicalStockAccountKey()
         });
 
         await prisma.tinyWebhookLog.create({

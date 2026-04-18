@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { buildCatalogProductImageProxyUrl, PORTAL_BRAND_FALLBACK_IMAGE } from "@/lib/catalog-images";
 import { getColorLabel, getParentSku, getSizeLabel } from "@/lib/sku";
 import { getStockBand, getStockBandLabel, type StockBand, resolveStockThresholds } from "@/lib/stock";
 
@@ -80,7 +81,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string) {
       sku: parentSku,
       supplier,
       name: product.internalName.replace(/\s[PMGXÚÚNICO0-9]+?\s[A-Za-zÀ-ÿ]+$/u, "").trim() || product.internalName,
-      imageUrl: product.imageUrl ?? "/brand/pepper-logo.png",
+      imageUrl: buildCatalogProductImageProxyUrl(parentSku, product.imageUrl ?? PORTAL_BRAND_FALLBACK_IMAGE),
       syncState: product.syncStatus === "STALE" || product.syncStatus === "ERROR" ? "stale" : "fresh",
       lastUpdated: snapshot?.syncedAt
         ? `Atualizado em ${snapshot.syncedAt.toLocaleTimeString("pt-BR", {

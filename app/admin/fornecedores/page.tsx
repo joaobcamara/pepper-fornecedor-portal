@@ -19,7 +19,7 @@ export default async function AdminSuppliersPage() {
     : await prisma.supplier
         .findMany({
           include: {
-            assignments: {
+            catalogProducts: {
               where: {
                 active: true
               }
@@ -43,7 +43,7 @@ export default async function AdminSuppliersPage() {
             active: supplier.active,
             canViewProductValues: supplier.canViewProductValues,
             canViewFinancialDashboard: supplier.canViewFinancialDashboard,
-            productCount: new Set(supplier.assignments.map((assignment) => assignment.productId)).size,
+            productCount: supplier.catalogProducts.length,
             userCount: supplier.users.length,
             createdAt: supplier.createdAt.toLocaleDateString("pt-BR")
           }))
