@@ -6,7 +6,6 @@ import { AlertTriangle, PackageSearch, RefreshCcw, Search, ShoppingCart, X } fro
 
 import { ProductOperationalStrip } from "@/components/product-operational-strip";
 import { SupplierIdentityHero } from "@/components/supplier-identity-hero";
-import { StatusPill } from "@/components/status-pill";
 import { SupplierTopNav } from "@/components/supplier-top-nav";
 import { cn } from "@/lib/cn";
 import type { StockBand } from "@/lib/stock";
@@ -107,6 +106,20 @@ const filters = [
   { label: "Baixos", value: "low" },
   { label: "OK", value: "ok" }
 ] as const;
+
+function bandTone(band: StockBand) {
+  if (band === "critical") return "border-rose-200 bg-rose-50/80";
+  if (band === "low") return "border-amber-200 bg-amber-50/80";
+  if (band === "ok") return "border-emerald-200 bg-emerald-50/70";
+  return "border-slate-200 bg-white/80";
+}
+
+function bandBadgeTone(band: StockBand) {
+  if (band === "critical") return "bg-rose-100 text-rose-700";
+  if (band === "low") return "bg-amber-100 text-amber-700";
+  if (band === "ok") return "bg-emerald-100 text-emerald-700";
+  return "bg-slate-100 text-slate-600";
+}
 
 function shortenProductTitle(value: string, words = 3) {
   const parts = value.trim().split(/\s+/);
@@ -394,35 +407,32 @@ export function SupplierProductsPage({
           </div>
         ) : (
           <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleProducts.map((product) => (
-              <button
-                key={product.id}
-                type="button"
-                onClick={() => setSelectedId(product.id)}
-                className="group rounded-[2rem] border border-white/70 bg-white/80 p-5 text-left shadow-soft backdrop-blur transition hover:-translate-y-1"
-              >
-                <div className="mb-4 flex items-start justify-between gap-4">
-                  <div className="space-y-2">
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{product.supplier}</p>
-                    <h3 className="text-xl font-semibold text-slate-900">{shortenProductTitle(product.name)}</h3>
-                    <p className="text-sm text-slate-500">{product.sku}</p>
-                  </div>
-                  <StatusPill band={product.band} label={product.bandLabel} />
-                </div>
+            {visibleProducts.map((product) => {
+              const variantCount = product.matrix.reduce((total, row) => total + row.items.length, 0);
 
-                  <div className="rounded-[1.7rem] bg-[linear-gradient(135deg,#fff7f0_0%,#f4fbfb_100%)] p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                      <p className="text-sm text-slate-500">Saldo multiempresa</p>
-                      <p className="mt-1 text-4xl font-semibold tracking-tight text-slate-900">{product.total}</p>
-                        <div className="mt-3 space-y-1 text-xs text-slate-500">
-                          <p>Reservado: {product.totalReservedStock ?? 0}</p>
-                          <p>Vendas hoje: {product.salesToday}</p>
-                          <p>Vendas 7d: {product.sales7d}</p>
-                          <p>Vendas 30d: {product.sales30d}</p>
-                          {canViewProductValues ? <p>Valor total: {formatCurrency(product.inventorySaleValue)}</p> : null}
-                        </div>
+              return (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => setSelectedId(product.id)}
+                  className={cn(
+                    "rounded-[2rem] border p-5 text-left shadow-soft transition hover:-translate-y-0.5",
+                    bandTone(product.band)
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[0.72rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{product.sku}</p>
+                      <h3 className="mt-2 text-xl font-semibold text-slate-900">{shortenProductTitle(product.name)}</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {variantCount} variacoes • multiempresa {product.total} • reservado {product.totalReservedStock ?? 0}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
+                        <span className="rounded-full bg-white/80 px-3 py-1">Atualizado {product.lastUpdated}</span>
+                        <span className="rounded-full bg-white/80 px-3 py-1">{product.supplier}</span>
                       </div>
+                    </div>
+
                     <ProductPreviewImage
                       imageUrl={product.imageUrl}
                       alt={product.name}
@@ -430,55 +440,72 @@ export function SupplierProductsPage({
                     />
                   </div>
 
-                  <div className="mt-5 flex items-center justify-between text-xs font-medium text-slate-500">
-                    <div className="space-y-1">
-                      <span className="block">{product.lastUpdated}</span>
-                      <span className="block">{product.lastSaleAt ? `Ultima venda ${product.lastSaleAt}` : "Sem venda recente"}</span>
-                    </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <span className={cn("rounded-full px-3 py-1 text-xs font-semibold", bandBadgeTone(product.band))}>
+                      {product.bandLabel}
+                    </span>
+                    <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">{product.movementBadge}</span>
                     {product.syncState === "stale" ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-[#fff1e7] px-3 py-1 text-[#b15529]">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-amber-700">
                         <AlertTriangle className="h-3.5 w-3.5" />
                         Dados desatualizados
                       </span>
                     ) : (
-                      <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">Sincronizado</span>
+                      <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">Sincronizado</span>
                     )}
                   </div>
-                </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-600">
+                    <InfoBox label="Vendas 1D" value={String(product.salesToday)} />
+                    <InfoBox label="Vendas 7D" value={String(product.sales7d)} />
+                    <InfoBox label="Vendas 30D" value={String(product.sales30d)} />
+                    <InfoBox
+                      label="Cobertura"
+                      value={product.coverageDays === null ? "Sem base" : `${product.coverageDays} dias`}
+                    />
+                  </div>
 
                   <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">{product.movementBadge}</span>
-                    <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
-                      Cobertura: {product.coverageDays === null ? "Sem base" : `${product.coverageDays} dias`}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
-                      Reservado: {product.totalReservedStock ?? 0}
-                    </span>
                     {product.topColorLabel ? (
-                      <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
+                      <span className="rounded-full bg-white/80 px-3 py-2 font-semibold text-slate-700">
                         Cor lider: {product.topColorLabel}
                       </span>
                     ) : null}
+                    {product.topSizeLabel ? (
+                      <span className="rounded-full bg-white/80 px-3 py-2 font-semibold text-slate-700">
+                        Tamanho lider: {product.topSizeLabel}
+                      </span>
+                    ) : null}
+                    {product.lastSaleAt ? (
+                      <span className="rounded-full bg-white/80 px-3 py-2 font-semibold text-slate-700">
+                        Ultima venda: {product.lastSaleAt}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-white/80 px-3 py-2 font-semibold text-slate-700">Sem venda recente</span>
+                    )}
                     {canViewProductValues ? (
-                      <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
-                        Faixa: {formatPriceRange(product.priceFrom, product.priceTo)}
+                      <span className="rounded-full bg-white/80 px-3 py-2 font-semibold text-slate-700">
+                        Valor em estoque: {formatCurrency(product.inventorySaleValue)}
                       </span>
                     ) : null}
                   </div>
 
-                  <ProductOperationalStrip
-                    compact
-                    replenishmentCard={product.replenishmentCard}
-                    activeOrder={product.activeOrder}
-                    relatedOrderCount={product.relatedOrderCount}
-                  />
+                  <div className="mt-4">
+                    <ProductOperationalStrip
+                      compact
+                      replenishmentCard={product.replenishmentCard}
+                      activeOrder={product.activeOrder}
+                      relatedOrderCount={product.relatedOrderCount}
+                    />
+                  </div>
 
-                <div className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#ec6232] px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-[#ffb391] sm:w-auto">
-                  <ShoppingCart className="h-4 w-4" />
-                  Ver detalhes e sugerir reposicao
-                </div>
-              </button>
-            ))}
+                  <div className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">
+                    <ShoppingCart className="h-4 w-4" />
+                    Ver detalhes e sugerir reposicao
+                  </div>
+                </button>
+              );
+            })}
           </section>
         )}
 
@@ -526,6 +553,15 @@ function formatPriceRange(priceFrom: number | null, priceTo: number | null) {
     return `${formatCurrency(priceFrom)} a ${formatCurrency(priceTo)}`;
   }
   return formatCurrency(priceFrom ?? priceTo ?? 0);
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-white/80 px-3 py-3">
+      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-400">{label}</p>
+      <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
+    </div>
+  );
 }
 
 function MetricCard({

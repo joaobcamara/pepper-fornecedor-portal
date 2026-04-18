@@ -1406,54 +1406,6 @@ export function AdminProductInventoryManager({
                   )}
                 </div>
 
-                {selectedLinkedSupplier ? (
-                  <div className="mt-4 rounded-[1.4rem] border border-[#f1dccf] bg-white px-4 py-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-4">
-                        <SupplierIdentityAvatar
-                          logoUrl={selectedLinkedSupplier.logoUrl ?? null}
-                          name={selectedLinkedSupplier.name}
-                          className="h-16 w-16 rounded-[1.6rem]"
-                        />
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#a94c25]">Fornecedor ativo</p>
-                          <p className="mt-1 text-lg font-semibold text-slate-900">{selectedLinkedSupplier.name}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-500 sm:min-w-[18rem]">
-                        <InfoPill
-                          label="Preco"
-                          value={
-                            selectedLinkedSupplier.supplierSalePrice === null || selectedLinkedSupplier.supplierSalePrice === undefined
-                              ? "-"
-                              : formatCurrency(selectedLinkedSupplier.supplierSalePrice)
-                          }
-                          compact
-                        />
-                        <InfoPill
-                          label="Critica"
-                          value={
-                            selectedLinkedSupplier.criticalStockThreshold === null || selectedLinkedSupplier.criticalStockThreshold === undefined
-                              ? "-"
-                              : String(selectedLinkedSupplier.criticalStockThreshold)
-                          }
-                          compact
-                        />
-                        <InfoPill
-                          label="Baixo"
-                          value={
-                            selectedLinkedSupplier.lowStockThreshold === null || selectedLinkedSupplier.lowStockThreshold === undefined
-                              ? "-"
-                              : String(selectedLinkedSupplier.lowStockThreshold)
-                          }
-                          compact
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
                 {reconcileFeedback ? (
                   <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                     {reconcileFeedback}
