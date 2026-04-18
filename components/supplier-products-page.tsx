@@ -406,7 +406,7 @@ export function SupplierProductsPage({
             </p>
           </div>
         ) : (
-          <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          <section className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {visibleProducts.map((product) => {
               const variantCount = product.matrix.reduce((total, row) => total + row.items.length, 0);
 
