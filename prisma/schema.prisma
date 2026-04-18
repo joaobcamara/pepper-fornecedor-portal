@@ -1212,6 +1212,9 @@ model CatalogProductSupplier {
   catalogProductId  String
   supplierId        String
   active            Boolean        @default(true)
+  supplierSalePrice Float?
+  criticalStockThreshold Int?
+  lowStockThreshold Int?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   catalogProduct    CatalogProduct @relation(fields: [catalogProductId], references: [id])

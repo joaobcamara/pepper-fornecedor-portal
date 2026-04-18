@@ -11,6 +11,7 @@ import {
   getTrustedFoundationInventorySyncStatus
 } from "@/lib/foundation-inventory";
 import { readPortalCatalogViewState } from "@/lib/foundation-portal-catalog-state";
+import { getPepperPhysicalStockAccountKey } from "@/lib/pepper-tiny-account-data";
 import { prisma } from "@/lib/prisma";
 import { getColorLabel, getParentSku, getSizeLabel, normalizeSku } from "@/lib/sku";
 import { getStockBand, resolveStockThresholds, type StockBand } from "@/lib/stock";
@@ -26,6 +27,10 @@ export type FoundationCatalogSupplierLink = {
   id: string;
   name: string;
   slug: string;
+  active?: boolean;
+  supplierSalePrice?: number | null;
+  criticalStockThreshold?: number | null;
+  lowStockThreshold?: number | null;
 };
 
 export type FoundationCatalogVariantRecord = {
@@ -38,6 +43,9 @@ export type FoundationCatalogVariantRecord = {
   colorCode: string | null;
   colorLabel: string;
   quantity: number | null;
+  reservedStock: number | null;
+  localPhysicalStock: number | null;
+  localAvailableStock: number | null;
   stockStatus: string | null;
   inventorySyncStatus: InventorySyncStatus;
   lastStockSyncAt: Date | null;
@@ -74,6 +82,7 @@ export type FoundationCatalogProductRecord = {
   supplierLinks: FoundationCatalogSupplierLink[];
   variants: FoundationCatalogVariantRecord[];
   totalStock: number;
+  totalReservedStock: number;
   staleVariantCount: number;
   syncState: "fresh" | "stale";
   lastUpdatedAt: Date | null;
@@ -211,6 +220,17 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       })
     : [];
 
+  const variantIds = catalogProducts.flatMap((product) => product.variants.map((variant) => variant.id));
+  const accountStates = variantIds.length
+    ? await prisma.catalogVariantAccountState.findMany({
+        where: {
+          catalogVariantId: {
+            in: variantIds
+          }
+        }
+      })
+    : [];
+
   const sourceProductById = new Map<string, SourceProductRecord>(
     sourceProducts.map((product) => [
       product.id,
@@ -225,20 +245,34 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       }
     ])
   );
+  const authoritativeAccountStateByVariantId = new Map(
+    accountStates
+      .filter((state) => state.accountKey === getPepperPhysicalStockAccountKey())
+      .map((state) => [state.catalogVariantId, state] as const)
+  );
+  const reservedStockByVariantId = new Map<string, number>();
+
+  for (const state of accountStates) {
+    reservedStockByVariantId.set(
+      state.catalogVariantId,
+      (reservedStockByVariantId.get(state.catalogVariantId) ?? 0) + Math.max(0, state.reservedStock ?? 0)
+    );
+  }
 
   const foundationProducts = catalogProducts.map<FoundationCatalogProductRecord>((catalogProduct) => {
     const portalCatalogView = readPortalCatalogViewState(catalogProduct.foundationMetadataJson);
     const parentSource = catalogProduct.sourceProductId
       ? sourceProductById.get(catalogProduct.sourceProductId) ?? null
       : null;
+    const supplierLink = params.supplierId ? catalogProduct.supplierLinks[0] ?? null : null;
 
     const variants = catalogProduct.variants.map<FoundationCatalogVariantRecord>((variant) => {
       const sourceProduct = variant.sourceProductId ? sourceProductById.get(variant.sourceProductId) ?? null : null;
       const thresholds = resolveStockThresholds({
         productCritical: sourceProduct?.criticalStockThreshold ?? null,
         productLow: sourceProduct?.lowStockThreshold ?? null,
-        parentCritical: parentSource?.criticalStockThreshold ?? null,
-        parentLow: parentSource?.lowStockThreshold ?? null
+        parentCritical: supplierLink?.criticalStockThreshold ?? parentSource?.criticalStockThreshold ?? null,
+        parentLow: supplierLink?.lowStockThreshold ?? parentSource?.lowStockThreshold ?? null
       });
       const quantity = getTrustedFoundationInventoryQuantity(variant.inventory);
       const band = getStockBand(quantity, thresholds);
@@ -247,6 +281,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         sourceProduct?.syncStatus ?? InventorySyncStatus.STALE
       );
       const lastStockSyncAt = getTrustedFoundationInventoryLastSyncAt(variant.inventory);
+      const authoritativeAccountState = authoritativeAccountStateByVariantId.get(variant.id) ?? null;
 
       return {
         id: variant.id,
@@ -258,10 +293,13 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         colorCode: variant.colorCode ?? null,
         colorLabel: variant.colorLabel ?? getColorLabel(variant.colorCode, catalogProduct.name),
         quantity,
+        reservedStock: reservedStockByVariantId.get(variant.id) ?? null,
+        localPhysicalStock: authoritativeAccountState?.localPhysicalStock ?? null,
+        localAvailableStock: authoritativeAccountState?.localAvailableStock ?? null,
         stockStatus: variant.inventory?.stockStatus ?? null,
         inventorySyncStatus,
         lastStockSyncAt,
-        salePrice: variant.price?.salePrice ?? null,
+        salePrice: supplierLink?.supplierSalePrice ?? variant.price?.salePrice ?? null,
         promotionalPrice: variant.price?.promotionalPrice ?? null,
         costPrice: variant.price?.costPrice ?? null,
         imageUrl: resolvePortalCatalogImageUrl({
@@ -279,8 +317,8 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         tinyCode: variant.tinyCode ?? null,
         criticalStockThreshold: sourceProduct?.criticalStockThreshold ?? null,
         lowStockThreshold: sourceProduct?.lowStockThreshold ?? null,
-        parentCriticalStockThreshold: parentSource?.criticalStockThreshold ?? null,
-        parentLowStockThreshold: parentSource?.lowStockThreshold ?? null,
+        parentCriticalStockThreshold: supplierLink?.criticalStockThreshold ?? parentSource?.criticalStockThreshold ?? null,
+        parentLowStockThreshold: supplierLink?.lowStockThreshold ?? parentSource?.lowStockThreshold ?? null,
         effectiveCriticalStockThreshold: thresholds.critical,
         effectiveLowStockThreshold: thresholds.low,
         band,
@@ -290,6 +328,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
     });
 
     const totalStock = variants.reduce((sum, variant) => sum + (variant.quantity ?? 0), 0);
+    const totalReservedStock = variants.reduce((sum, variant) => sum + (variant.reservedStock ?? 0), 0);
     const staleVariantCount = variants.filter((variant) => variant.inventorySyncStatus !== InventorySyncStatus.FRESH).length;
     const lastUpdatedAt = getLatestDate([
       ...variants.map((variant) => variant.lastStockSyncAt),
@@ -319,10 +358,15 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
       supplierLinks: catalogProduct.supplierLinks.map((link) => ({
         id: link.supplier.id,
         name: link.supplier.name,
-        slug: link.supplier.slug
+        slug: link.supplier.slug,
+        active: link.active,
+        supplierSalePrice: link.supplierSalePrice ?? null,
+        criticalStockThreshold: link.criticalStockThreshold ?? null,
+        lowStockThreshold: link.lowStockThreshold ?? null
       })),
       variants,
       totalStock,
+      totalReservedStock,
       staleVariantCount,
       syncState: staleVariantCount > 0 ? "stale" : "fresh",
       lastUpdatedAt

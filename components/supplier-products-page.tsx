@@ -17,6 +17,7 @@ type MatrixItem = {
   size: string;
   colorLabel: string;
   quantity: number | null;
+  reservedStock?: number | null;
   salePrice: number | null;
   promotionalPrice: number | null;
   costPrice: number | null;
@@ -39,6 +40,7 @@ type ProductCard = {
   lastUpdated: string;
   syncState: "fresh" | "stale";
   total: number;
+  totalReservedStock?: number;
   band: StockBand;
   bandLabel: string;
   priceFrom: number | null;
@@ -146,7 +148,7 @@ function ProductPreviewImage({
       }
       className={cn(
         "relative overflow-hidden rounded-3xl border border-white/80 bg-white shadow-inner transition",
-        size === "hero" ? "h-28 w-28 cursor-zoom-in" : "h-24 w-24 cursor-zoom-in"
+        size === "hero" ? "h-40 w-40 cursor-zoom-in" : "h-24 w-24 cursor-zoom-in"
       )}
     >
       <img
@@ -411,9 +413,10 @@ export function SupplierProductsPage({
                   <div className="rounded-[1.7rem] bg-[linear-gradient(135deg,#fff7f0_0%,#f4fbfb_100%)] p-4">
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                      <p className="text-sm text-slate-500">Saldo consolidado</p>
+                      <p className="text-sm text-slate-500">Saldo multiempresa</p>
                       <p className="mt-1 text-4xl font-semibold tracking-tight text-slate-900">{product.total}</p>
                         <div className="mt-3 space-y-1 text-xs text-slate-500">
+                          <p>Reservado: {product.totalReservedStock ?? 0}</p>
                           <p>Vendas hoje: {product.salesToday}</p>
                           <p>Vendas 7d: {product.sales7d}</p>
                           <p>Vendas 30d: {product.sales30d}</p>
@@ -447,6 +450,9 @@ export function SupplierProductsPage({
                     <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">{product.movementBadge}</span>
                     <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
                       Cobertura: {product.coverageDays === null ? "Sem base" : `${product.coverageDays} dias`}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
+                      Reservado: {product.totalReservedStock ?? 0}
                     </span>
                     {product.topColorLabel ? (
                       <span className="rounded-full bg-slate-100 px-3 py-2 font-semibold text-slate-700">
@@ -638,8 +644,8 @@ function ProductModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="h-[calc(100vh-1rem)] w-full overflow-y-auto rounded-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/35 p-2 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+      <div className="h-[calc(100vh-1rem)] w-full overflow-y-auto rounded-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:p-6" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#d27a4f]">Detalhamento do produto</p>
@@ -666,6 +672,7 @@ function ProductModal({
                     <div className="rounded-2xl bg-white/70 px-3 py-2">
                       Cobertura: {product.coverageDays === null ? "Sem base" : `${product.coverageDays} dias`}
                     </div>
+                    <div className="rounded-2xl bg-white/70 px-3 py-2">Reservado: {product.totalReservedStock ?? 0}</div>
                     <div className="rounded-2xl bg-white/70 px-3 py-2">
                       Cards vinculados: {product.relatedOrderCount}
                     </div>
@@ -721,10 +728,13 @@ function ProductModal({
                           >
                             {item.status}
                           </p>
-                          <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-500">
-                            <div className="rounded-xl bg-white px-2 py-2 text-center">Hoje {item.salesToday}</div>
-                            <div className="rounded-xl bg-white px-2 py-2 text-center">7d {item.sales7d}</div>
-                            <div className="rounded-xl bg-white px-2 py-2 text-center">30d {item.sales30d}</div>
+                          <div className="mt-3 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
+                            <p className="rounded-xl bg-white px-2 py-2 text-center">Reservado: {item.reservedStock ?? 0}</p>
+                            <div className="mt-2 flex items-center justify-center gap-3 rounded-xl bg-white px-2 py-2">
+                              <span>Hoje: {item.salesToday}</span>
+                              <span>7d: {item.sales7d}</span>
+                              <span>30d: {item.sales30d}</span>
+                            </div>
                           </div>
                           <input
                             type="number"
@@ -753,7 +763,7 @@ function ProductModal({
                   {product.matrix.map((row) => (
                     <section key={row.color} className="rounded-[1.4rem] border border-[#f8e4d9] bg-[#fffaf6] p-4">
                       <h3 className="text-sm font-semibold text-slate-900">{row.color}</h3>
-                      <div className="mt-4 grid grid-cols-6 gap-3">
+                      <div className="mt-4 grid grid-cols-5 gap-3">
                         {row.items.filter(Boolean).map((item) => {
                           const safeItem = item!;
                           return (
@@ -773,10 +783,13 @@ function ProductModal({
                               <p className="mt-1 text-[11px] text-slate-400">
                                 critico {safeItem.criticalStockThreshold} | baixo {safeItem.lowStockThreshold}
                               </p>
-                              <div className="mt-2 text-[11px] text-slate-500">
-                                <p>Hoje: {safeItem.salesToday}</p>
-                                <p>7d: {safeItem.sales7d}</p>
-                                <p>30d: {safeItem.sales30d}</p>
+                              <div className="mt-3 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
+                                <p className="rounded-xl bg-white px-2 py-2">Reservado: {safeItem.reservedStock ?? 0}</p>
+                                <div className="mt-2 flex items-center justify-center gap-3 rounded-xl bg-white px-2 py-2">
+                                  <span>Hoje: {safeItem.salesToday}</span>
+                                  <span>7d: {safeItem.sales7d}</span>
+                                  <span>30d: {safeItem.sales30d}</span>
+                                </div>
                               </div>
                               <input
                                 type="number"
@@ -842,10 +855,13 @@ function ProductModal({
                                 <p className="mt-1 text-[11px] text-slate-400">
                                   critico {item.criticalStockThreshold} | baixo {item.lowStockThreshold}
                                 </p>
-                                <div className="mt-2 text-[11px] text-slate-500">
-                                  <p>Hoje: {item.salesToday}</p>
-                                  <p>7d: {item.sales7d}</p>
-                                  <p>30d: {item.sales30d}</p>
+                                <div className="mt-3 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
+                                  <p className="rounded-xl bg-white px-2 py-2">Reservado: {item.reservedStock ?? 0}</p>
+                                  <div className="mt-2 flex items-center justify-center gap-3 rounded-xl bg-white px-2 py-2">
+                                    <span>Hoje: {item.salesToday}</span>
+                                    <span>7d: {item.sales7d}</span>
+                                    <span>30d: {item.sales30d}</span>
+                                  </div>
                                 </div>
                                 <input
                                   type="number"

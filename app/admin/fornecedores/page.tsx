@@ -7,6 +7,13 @@ import { getCurrentSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
 
+function withEmptyLinkedProducts<T extends { productCount: number }>(suppliers: T[]) {
+  return suppliers.map((supplier) => ({
+    ...supplier,
+    linkedProducts: []
+  }));
+}
+
 export default async function AdminSuppliersPage() {
   const session = await getCurrentSession();
 
@@ -15,13 +22,22 @@ export default async function AdminSuppliersPage() {
   }
 
   const supplierUsage = isLocalOperationalMode()
-    ? await getLocalSupplierDirectory()
+    ? await getLocalSupplierDirectory().then((suppliers) => withEmptyLinkedProducts(suppliers))
     : await prisma.supplier
         .findMany({
           include: {
             catalogProducts: {
-              where: {
-                active: true
+              include: {
+                catalogProduct: {
+                  include: {
+                    images: {
+                      orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+                    }
+                  }
+                }
+              },
+              orderBy: {
+                updatedAt: "desc"
               }
             },
             users: true
@@ -43,12 +59,66 @@ export default async function AdminSuppliersPage() {
             active: supplier.active,
             canViewProductValues: supplier.canViewProductValues,
             canViewFinancialDashboard: supplier.canViewFinancialDashboard,
-            productCount: supplier.catalogProducts.length,
+            productCount: supplier.catalogProducts.filter((link) => link.active).length,
             userCount: supplier.users.length,
-            createdAt: supplier.createdAt.toLocaleDateString("pt-BR")
+            createdAt: supplier.createdAt.toLocaleDateString("pt-BR"),
+            linkedProducts: supplier.catalogProducts.map((link) => ({
+              id: link.id,
+              catalogProductId: link.catalogProductId,
+              parentSku: link.catalogProduct.skuParent,
+              name: link.catalogProduct.name,
+              imageUrl:
+                link.catalogProduct.mainImageUrl ??
+                link.catalogProduct.images.find((image) => image.isPrimary)?.url ??
+                link.catalogProduct.images[0]?.url ??
+                null,
+              active: link.active,
+              supplierSalePrice: link.supplierSalePrice ?? null,
+              criticalStockThreshold: link.criticalStockThreshold ?? null,
+              lowStockThreshold: link.lowStockThreshold ?? null
+            }))
           }))
         )
-        .catch(() => getDemoSupplierDirectory());
+        .catch(async () => withEmptyLinkedProducts(getDemoSupplierDirectory()));
+
+  const productOptions = isLocalOperationalMode()
+    ? []
+    : await prisma.catalogProduct
+        .findMany({
+          where: {
+            active: true,
+            archivedAt: null
+          },
+          select: {
+            id: true,
+            skuParent: true,
+            name: true,
+            mainImageUrl: true,
+            images: {
+              select: {
+                url: true,
+                isPrimary: true
+              },
+              orderBy: [{ isPrimary: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }]
+            }
+          },
+          orderBy: {
+            skuParent: "asc"
+          }
+        })
+        .then((products) =>
+          products.map((product) => ({
+            id: product.id,
+            parentSku: product.skuParent,
+            name: product.name,
+            imageUrl:
+              product.mainImageUrl ??
+              product.images.find((image) => image.isPrimary)?.url ??
+              product.images[0]?.url ??
+              null
+          }))
+        )
+        .catch(() => []);
   const inactiveCount = supplierUsage.filter((supplier) => !supplier.active).length;
   const withoutProductsCount = supplierUsage.filter((supplier) => supplier.productCount === 0).length;
   const hiddenFinancialCount = supplierUsage.filter((supplier) => !supplier.canViewFinancialDashboard).length;
@@ -68,7 +138,7 @@ export default async function AdminSuppliersPage() {
           : "Cadastre fornecedores, defina visibilidade financeira e mantenha os vinculos de produto organizados."
       }
     >
-      <AdminSuppliersManager suppliers={supplierUsage} />
+      <AdminSuppliersManager suppliers={supplierUsage} productOptions={productOptions} />
     </AdminShell>
   );
 }

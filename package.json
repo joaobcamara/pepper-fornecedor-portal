@@ -24,6 +24,7 @@
     "foundation:reset:test-data": "tsx scripts/reset-foundation-test-data.ts",
     "foundation:repopulate": "tsx scripts/repopulate-foundation-from-tiny.ts",
     "foundation:references:sync": "tsx scripts/sync-pepper-references.ts",
+    "foundation:reconcile:sku": "tsx scripts/reconcile-foundation-stock-by-sku.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

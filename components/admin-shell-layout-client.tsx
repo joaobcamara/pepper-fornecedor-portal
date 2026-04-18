@@ -35,9 +35,25 @@ export function AdminShellLayoutClient({
   children: React.ReactNode;
 }) {
   const [navOpen, setNavOpen] = useState(false);
+  const [navExpanded, setNavExpanded] = useState(false);
+  const navVisible = navOpen || navExpanded;
+
+  function toggleNav() {
+    if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
+      setNavExpanded((current) => !current);
+      return;
+    }
+
+    setNavOpen((current) => !current);
+  }
+
+  function collapseNav() {
+    setNavOpen(false);
+    setNavExpanded(false);
+  }
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[280px_1fr]">
+    <div className={cn("mx-auto grid max-w-7xl gap-6", navExpanded ? "lg:grid-cols-[280px_1fr]" : "lg:grid-cols-[88px_1fr]")}>
       {navOpen ? (
         <button
           type="button"
@@ -49,26 +65,31 @@ export function AdminShellLayoutClient({
 
       <aside
         className={cn(
-          "rounded-[2rem] border border-white/70 bg-white/85 p-5 shadow-panel backdrop-blur",
-          "fixed inset-y-4 left-4 z-40 w-[18.5rem] max-w-[calc(100vw-2rem)] overflow-y-auto transition lg:static lg:w-auto lg:max-w-none lg:translate-x-0",
+          "rounded-[2rem] border border-white/70 bg-white/85 shadow-panel backdrop-blur",
+          "fixed inset-y-4 left-4 z-40 w-[18.5rem] max-w-[calc(100vw-2rem)] overflow-y-auto px-5 py-5 transition lg:static lg:max-w-none lg:translate-x-0",
+          navExpanded ? "lg:w-[17.5rem] lg:px-5" : "lg:w-[5.5rem] lg:px-3",
           navOpen ? "translate-x-0" : "-translate-x-[120%] lg:translate-x-0"
         )}
       >
-        <LogoMark className="w-fit" />
-        <div className="mt-6">
+        <div className={cn("flex items-center justify-between gap-3", !navVisible && "lg:flex-col")}>
+          <LogoMark compact={!navVisible} className={cn("w-fit", !navVisible && "lg:w-full")} />
+          <button
+            type="button"
+            onClick={toggleNav}
+            className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-2.5 text-slate-600 transition hover:border-[#f3b89a] hover:text-slate-900"
+            aria-label={navVisible ? "Recolher menu lateral" : "Expandir menu lateral"}
+            title={navVisible ? "Recolher menu" : "Expandir menu"}
+          >
+            {navVisible ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          </button>
+        </div>
+
+        <div className={cn("mt-6", !navVisible && "lg:hidden")}>
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[#d27a4f]">Admin Pepper</p>
           <p className="mt-2 text-sm leading-6 text-slate-500">
             Navegacao enxuta por modulo para manter o painel limpo e operacional.
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={() => setNavOpen(false)}
-          className="absolute right-4 top-4 rounded-2xl border border-slate-200 bg-white p-2 text-slate-500 lg:hidden"
-        >
-          <X className="h-4 w-4" />
-        </button>
 
         <nav className="mt-8 flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
           {navItems.map((item) => {
@@ -79,16 +100,18 @@ export function AdminShellLayoutClient({
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={() => setNavOpen(false)}
+                onClick={collapseNav}
                 className={cn(
-                  "flex shrink-0 items-center gap-3 whitespace-nowrap rounded-2xl border px-4 py-3 text-sm font-semibold transition lg:shrink lg:whitespace-normal",
+                  "flex shrink-0 items-center gap-3 whitespace-nowrap rounded-2xl border px-4 py-3 text-sm font-semibold transition lg:whitespace-normal",
+                  !navVisible && "lg:justify-center lg:px-0",
                   active
                     ? "border-[#f3b89a] bg-[#fff1e7] text-[#a94b25]"
                     : "border-transparent bg-transparent text-slate-600 hover:border-slate-200 hover:bg-white"
                 )}
+                title={item.label}
               >
                 <Icon className="h-4 w-4" />
-                {item.label}
+                <span className={cn("block", !navVisible && "lg:hidden")}>{item.label}</span>
               </Link>
             );
           })}
@@ -96,8 +119,11 @@ export function AdminShellLayoutClient({
 
         <div className="mt-8 border-t border-slate-200 pt-5">
           <LogoutButton
-            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[#f3b89a] hover:text-slate-900"
-            label="Sair do admin"
+            className={cn(
+              "inline-flex w-full items-center gap-2 rounded-2xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:border-[#f3b89a] hover:text-slate-900",
+              navVisible ? "justify-center px-4" : "justify-center px-0"
+            )}
+            label={navVisible ? "Sair do admin" : ""}
           />
         </div>
       </aside>
@@ -112,10 +138,11 @@ export function AdminShellLayoutClient({
             </div>
             <button
               type="button"
-              onClick={() => setNavOpen(true)}
-              className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-3 text-slate-600 lg:hidden"
+              onClick={toggleNav}
+              className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-3 text-slate-600"
+              aria-label={navVisible ? "Recolher menu lateral" : "Expandir menu lateral"}
             >
-              <Menu className="h-5 w-5" />
+              {navVisible ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
           </div>
         </header>

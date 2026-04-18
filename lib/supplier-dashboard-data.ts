@@ -18,6 +18,7 @@ type GroupedVariant = {
   size: string;
   color: string;
   quantity: number | null;
+  reservedStock?: number | null;
   salePrice: number | null;
   promotionalPrice: number | null;
   costPrice: number | null;
@@ -37,6 +38,7 @@ export type SupplierDashboardMatrixItem = {
   size: string;
   colorLabel: string;
   quantity: number | null;
+  reservedStock?: number | null;
   salePrice: number | null;
   promotionalPrice: number | null;
   costPrice: number | null;
@@ -59,6 +61,7 @@ export type SupplierDashboardProduct = {
   lastUpdated: string;
   syncState: "fresh" | "stale";
   total: number;
+  totalReservedStock?: number;
   band: StockBand;
   bandLabel: string;
   priceFrom: number | null;
@@ -293,6 +296,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
         size: variant.sizeLabel,
         color: variant.colorLabel,
         quantity: variant.quantity,
+        reservedStock: variant.reservedStock ?? null,
         salePrice: variant.salePrice,
         promotionalPrice: variant.promotionalPrice,
         costPrice: variant.costPrice,
@@ -330,6 +334,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
           size: variant.size,
           colorLabel: variant.color,
           quantity: variant.quantity,
+          reservedStock: variant.reservedStock ?? null,
           salePrice: variant.salePrice,
           promotionalPrice: variant.promotionalPrice,
           costPrice: variant.costPrice,
@@ -409,6 +414,7 @@ export async function getSupplierDashboardDataFromDb(supplierId: string): Promis
         : "Sem sincronizacao",
       syncState: product.syncState,
       total,
+      totalReservedStock: product.totalReservedStock ?? 0,
       band,
       bandLabel: getStockBandLabel(band),
       priceFrom,

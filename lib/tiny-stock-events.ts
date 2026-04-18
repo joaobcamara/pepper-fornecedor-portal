@@ -15,7 +15,13 @@ import {
 } from "@/lib/pepper-tiny-account-data";
 import { prisma } from "@/lib/prisma";
 import { getStockBand, resolveStockThresholds } from "@/lib/stock";
-import { getTinyStockByProductId, isTinyConfigured, searchTinyProductsBySku, type TinyAccountKey, toStringValue } from "@/lib/tiny";
+import {
+  getTinyStockSnapshotByProductId,
+  isTinyConfigured,
+  searchTinyProductsBySku,
+  type TinyAccountKey,
+  toStringValue
+} from "@/lib/tiny";
 import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 
 const tinyWebhookEnvelopeSchema = z.object({
@@ -197,6 +203,7 @@ async function resolveTinyProductIdForStockRefresh(input: {
   accountKey: TinyAccountKey;
   sku?: string | null;
   tinyProductId?: string | null;
+  allowWebhookTinyProductIdFallback?: boolean;
 }) {
   if (input.sku) {
     const exactMatches = await searchTinyProductsBySku(input.sku, input.accountKey);
@@ -221,7 +228,36 @@ async function resolveTinyProductIdForStockRefresh(input: {
     return directMapping.tinyId;
   }
 
-  if (input.tinyProductId && /^\d+$/.test(input.tinyProductId)) {
+  const catalogVariant = await prisma.catalogVariant.findUnique({
+    where: {
+      id: input.catalogVariantId
+    },
+    select: {
+      tinyProductId: true,
+      sourceProductId: true
+    }
+  });
+
+  if (catalogVariant?.tinyProductId && /^\d+$/.test(catalogVariant.tinyProductId)) {
+    return catalogVariant.tinyProductId;
+  }
+
+  if (catalogVariant?.sourceProductId) {
+    const legacyVariant = await prisma.product.findUnique({
+      where: {
+        id: catalogVariant.sourceProductId
+      },
+      select: {
+        tinyProductId: true
+      }
+    });
+
+    if (legacyVariant?.tinyProductId && /^\d+$/.test(legacyVariant.tinyProductId)) {
+      return legacyVariant.tinyProductId;
+    }
+  }
+
+  if (input.allowWebhookTinyProductIdFallback && input.tinyProductId && /^\d+$/.test(input.tinyProductId)) {
     return input.tinyProductId;
   }
 
@@ -289,11 +325,15 @@ async function refreshFoundationInventoryFromTinySignal(params: {
   const refreshProductId =
     (await resolveTinyProductIdForStockRefresh({
       ...params,
-      accountKey: authoritativeAccountKey
+      accountKey: authoritativeAccountKey,
+      allowWebhookTinyProductIdFallback: false
     })) ??
     (params.accountKey === authoritativeAccountKey
       ? null
-      : await resolveTinyProductIdForStockRefresh(params));
+      : await resolveTinyProductIdForStockRefresh({
+          ...params,
+          allowWebhookTinyProductIdFallback: false
+        }));
 
   if (!refreshProductId) {
     throw new Error(
@@ -301,25 +341,56 @@ async function refreshFoundationInventoryFromTinySignal(params: {
     );
   }
 
-  const quantity = await getTinyStockByProductId(refreshProductId, authoritativeAccountKey);
+  const snapshot = await getTinyStockSnapshotByProductId(refreshProductId, authoritativeAccountKey);
+
+  const signalRefreshProductId =
+    params.accountKey === authoritativeAccountKey
+      ? refreshProductId
+      : await resolveTinyProductIdForStockRefresh({
+          ...params,
+          allowWebhookTinyProductIdFallback: true
+        });
+  const signalSnapshot =
+    signalRefreshProductId && params.accountKey !== authoritativeAccountKey
+      ? await getTinyStockSnapshotByProductId(signalRefreshProductId, params.accountKey)
+      : null;
 
   return {
-    quantity,
-    tinyProductId: refreshProductId,
-    authoritativeAccountKey
+    quantity: snapshot.availableMultiCompanyStock,
+    physicalStock: snapshot.stockBalance,
+    reservedStock: snapshot.reservedStock,
+    localAvailableStock: snapshot.availableMultiCompanyStock,
+    authoritativeTinyProductId: refreshProductId,
+    authoritativeAccountKey,
+    signalTinyProductId: signalRefreshProductId,
+    signalSnapshot
   };
 }
 
 export async function persistFoundationVariantInventory(params: {
   catalogVariantId: string;
   quantity: number | null;
+  physicalStock?: number | null;
+  reservedStock?: number | null;
+  localAvailableStock?: number | null;
   syncStatus: InventorySyncStatus;
   syncedAt: Date;
   authoritativeAccountKey?: TinyAccountKey | null;
   signalAccountKey?: TinyAccountKey | null;
   reconciledTinyProductId?: string | null;
+  signalTinyProductId?: string | null;
   rawPayload?: string | null;
   localSignalQuantity?: number | null;
+  signalPhysicalStock?: number | null;
+  signalReservedStock?: number | null;
+  signalLocalAvailableStock?: number | null;
+  additionalAccountStates?: Array<{
+    accountKey: TinyAccountKey;
+    tinyProductId?: string | null;
+    localPhysicalStock?: number | null;
+    localAvailableStock?: number | null;
+    reservedStock?: number | null;
+  }>;
 }) {
   const target = await resolveFoundationVariantInventoryTargetByCatalogVariantId(params.catalogVariantId);
 
@@ -365,18 +436,26 @@ export async function persistFoundationVariantInventory(params: {
     }
   });
 
-  async function upsertAccountState(accountKey: TinyAccountKey, localAvailableStock: number | null) {
+  async function upsertAccountState(input: {
+    accountKey: TinyAccountKey;
+    tinyProductId?: string | null;
+    localPhysicalStock?: number | null;
+    localAvailableStock?: number | null;
+    reservedStock?: number | null;
+  }) {
     await prisma.catalogVariantAccountState.upsert({
       where: {
         catalogVariantId_accountKey: {
           catalogVariantId: targetCatalogVariantId,
-          accountKey
+          accountKey: input.accountKey
         }
       },
       update: {
         sku: targetSku,
-        tinyProductId: params.reconciledTinyProductId ?? null,
-        localAvailableStock,
+        tinyProductId: input.tinyProductId ?? null,
+        localPhysicalStock: input.localPhysicalStock ?? null,
+        localAvailableStock: input.localAvailableStock ?? null,
+        reservedStock: input.reservedStock ?? null,
         availableMultiCompanyStock: params.quantity,
         inventorySyncStatus: params.syncStatus,
         lastStockSyncAt: params.syncedAt,
@@ -385,10 +464,12 @@ export async function persistFoundationVariantInventory(params: {
       },
       create: {
         catalogVariantId: targetCatalogVariantId,
-        accountKey,
+        accountKey: input.accountKey,
         sku: targetSku,
-        tinyProductId: params.reconciledTinyProductId ?? null,
-        localAvailableStock,
+        tinyProductId: input.tinyProductId ?? null,
+        localPhysicalStock: input.localPhysicalStock ?? null,
+        localAvailableStock: input.localAvailableStock ?? null,
+        reservedStock: input.reservedStock ?? null,
         availableMultiCompanyStock: params.quantity,
         inventorySyncStatus: params.syncStatus,
         lastStockSyncAt: params.syncedAt,
@@ -399,17 +480,45 @@ export async function persistFoundationVariantInventory(params: {
   }
 
   if (params.authoritativeAccountKey) {
-    await upsertAccountState(
-      params.authoritativeAccountKey,
-      params.authoritativeAccountKey === params.signalAccountKey ? params.localSignalQuantity ?? params.quantity : null
-    );
+    await upsertAccountState({
+      accountKey: params.authoritativeAccountKey,
+      tinyProductId: params.reconciledTinyProductId ?? null,
+      localPhysicalStock: params.physicalStock ?? null,
+      localAvailableStock:
+        params.localAvailableStock ??
+        (params.authoritativeAccountKey === params.signalAccountKey ? params.localSignalQuantity ?? params.quantity : params.quantity),
+      reservedStock: params.reservedStock ?? null
+    });
   }
 
   if (
     params.signalAccountKey &&
     params.signalAccountKey !== params.authoritativeAccountKey
   ) {
-    await upsertAccountState(params.signalAccountKey, params.localSignalQuantity ?? null);
+    await upsertAccountState({
+      accountKey: params.signalAccountKey,
+      tinyProductId: params.signalTinyProductId ?? params.reconciledTinyProductId ?? null,
+      localPhysicalStock: params.signalPhysicalStock ?? null,
+      localAvailableStock: params.signalLocalAvailableStock ?? params.localSignalQuantity ?? null,
+      reservedStock: params.signalReservedStock ?? null
+    });
+  }
+
+  for (const accountState of params.additionalAccountStates ?? []) {
+    if (
+      accountState.accountKey === params.authoritativeAccountKey ||
+      accountState.accountKey === params.signalAccountKey
+    ) {
+      continue;
+    }
+
+    await upsertAccountState({
+      accountKey: accountState.accountKey,
+      tinyProductId: accountState.tinyProductId ?? null,
+      localPhysicalStock: accountState.localPhysicalStock ?? null,
+      localAvailableStock: accountState.localAvailableStock ?? null,
+      reservedStock: accountState.reservedStock ?? null
+    });
   }
 
   if (target.sourceProductId) {
@@ -578,13 +687,20 @@ export async function handleTinyStockWebhook(
     const persisted = await persistFoundationVariantInventory({
       catalogVariantId,
       quantity: finalQuantity,
+      physicalStock: reconciledQuantity?.physicalStock ?? null,
+      reservedStock: reconciledQuantity?.reservedStock ?? null,
+      localAvailableStock: reconciledQuantity?.localAvailableStock ?? finalQuantity,
       syncStatus: finalQuantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
       syncedAt: processedAt,
       authoritativeAccountKey: reconciledQuantity?.authoritativeAccountKey ?? getPepperPhysicalStockAccountKey(),
       signalAccountKey: accountKey,
-      reconciledTinyProductId: reconciledQuantity?.tinyProductId ?? tinyProductId,
+      reconciledTinyProductId: reconciledQuantity?.authoritativeTinyProductId ?? tinyProductId,
+      signalTinyProductId: reconciledQuantity?.signalTinyProductId ?? tinyProductId,
       rawPayload: JSON.stringify(rawPayload),
-      localSignalQuantity: quantity
+      localSignalQuantity: quantity,
+      signalPhysicalStock: reconciledQuantity?.signalSnapshot?.stockBalance ?? null,
+      signalReservedStock: reconciledQuantity?.signalSnapshot?.reservedStock ?? null,
+      signalLocalAvailableStock: reconciledQuantity?.signalSnapshot?.availableMultiCompanyStock ?? quantity
     });
     const processingStage = isSyntheticSmokeEvent
       ? "synthetic_smoke"
@@ -607,7 +723,7 @@ export async function handleTinyStockWebhook(
       entityType: "catalog_variant",
       entityId: catalogVariantId,
       sku: persisted.sku,
-      tinyProductId: reconciledQuantity?.tinyProductId ?? tinyProductId,
+      tinyProductId: reconciledQuantity?.authoritativeTinyProductId ?? tinyProductId,
       errorMessage: anomalyMessage,
       payload: {
         accountKey,
@@ -617,7 +733,7 @@ export async function handleTinyStockWebhook(
           movementContext,
           quantity: finalQuantity,
           reconciledFromSignal: !isSyntheticSmokeEvent,
-          reconciledTinyProductId: reconciledQuantity?.tinyProductId ?? null
+          reconciledTinyProductId: reconciledQuantity?.authoritativeTinyProductId ?? null
         }
       }
     });
@@ -628,7 +744,7 @@ export async function handleTinyStockWebhook(
         accountKey,
         catalogVariantId,
         sku: persisted.sku,
-        tinyProductId: reconciledQuantity?.tinyProductId ?? tinyProductId,
+        tinyProductId: reconciledQuantity?.authoritativeTinyProductId ?? tinyProductId,
         quantity: finalQuantity,
         stockBand: persisted.stockBand,
         movementContext,
@@ -758,11 +874,14 @@ export async function reconcileVariantInventory(params: {
           throw new Error("Produto nao localizado para reconciliacao.");
         }
 
-        const quantity = await getTinyStockByProductId(refreshProductId, getPepperPhysicalStockAccountKey());
+        const snapshot = await getTinyStockSnapshotByProductId(refreshProductId, getPepperPhysicalStockAccountKey());
         await persistFoundationVariantInventory({
           catalogVariantId: variant.id,
-          quantity,
-          syncStatus: quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
+          quantity: snapshot.availableMultiCompanyStock,
+          physicalStock: snapshot.stockBalance,
+          reservedStock: snapshot.reservedStock,
+          localAvailableStock: snapshot.availableMultiCompanyStock,
+          syncStatus: snapshot.availableMultiCompanyStock === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
           syncedAt: new Date(),
           authoritativeAccountKey: getPepperPhysicalStockAccountKey(),
           reconciledTinyProductId: refreshProductId

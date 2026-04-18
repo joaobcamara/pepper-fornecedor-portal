@@ -60,6 +60,13 @@ export type TinyInspectedVariant = {
   raw: Record<string, unknown>;
 };
 
+export type TinyStockSnapshot = {
+  accountKey: TinyAccountKey;
+  stockBalance: number | null;
+  reservedStock: number | null;
+  availableMultiCompanyStock: number | null;
+};
+
 export type TinyInspectionResult = {
   searchedSku: string;
   source: "tiny";
@@ -519,7 +526,7 @@ export async function getTinyProductStructureById(id: string, accountKey: TinyAc
     .filter(Boolean) as TinyStructureRef[];
 }
 
-function extractStockQuantity(payload: TinyApiEnvelope, accountKey: TinyAccountKey = "pepper") {
+function extractStockSnapshot(payload: TinyApiEnvelope, accountKey: TinyAccountKey = "pepper"): TinyStockSnapshot {
   const entries =
     (Array.isArray(payload.retorno?.produtos) ? payload.retorno?.produtos : undefined) ??
     (payload.retorno?.produto ? [payload.retorno.produto] : []);
@@ -527,9 +534,31 @@ function extractStockQuantity(payload: TinyApiEnvelope, accountKey: TinyAccountK
   for (const entry of entries) {
     const item = unwrapTinyItem(entry);
     const preferMultiCompany = shouldReadAvailableMultiCompanyStock(accountKey);
+    const reservedStock =
+      toNumberValue(item.saldoReservado) ??
+      extractNumericByKeyPattern(item, (normalizedKey) => {
+        const mentionsReserved = normalizedKey.includes("saldoreservado") || normalizedKey.includes("reservado");
+        const mentionsStock =
+          normalizedKey.includes("saldo") ||
+          normalizedKey.includes("estoque") ||
+          normalizedKey.includes("disponivel");
+
+        return mentionsReserved && mentionsStock;
+      });
+    let availableMultiCompanyStock: number | null = null;
+    let stockBalance: number | null = null;
 
     if (preferMultiCompany) {
-      const multiCompany = extractNumericByKeyPattern(item, (normalizedKey) => {
+      availableMultiCompanyStock = extractNumericByKeyPattern(item, (normalizedKey) => {
+        const mentionsMultiCompany =
+          normalizedKey.includes("multiempresa") ||
+          normalizedKey.includes("multempresa") ||
+          normalizedKey.includes("multicompany") ||
+          normalizedKey.includes("compartilhado");
+        return mentionsMultiCompany && normalizedKey.includes("disponivel");
+      });
+
+      stockBalance = extractNumericByKeyPattern(item, (normalizedKey) => {
         const mentionsMultiCompany =
           normalizedKey.includes("multiempresa") ||
           normalizedKey.includes("multempresa") ||
@@ -537,50 +566,65 @@ function extractStockQuantity(payload: TinyApiEnvelope, accountKey: TinyAccountK
           normalizedKey.includes("compartilhado");
         const mentionsStock =
           normalizedKey.includes("saldo") ||
-          normalizedKey.includes("estoque") ||
-          normalizedKey.includes("disponivel");
+          normalizedKey.includes("estoque");
 
-        return mentionsMultiCompany && mentionsStock;
+        return mentionsMultiCompany && mentionsStock && !normalizedKey.includes("reservado");
       });
-
-      if (multiCompany !== null) {
-        return multiCompany;
-      }
     }
 
     const direct = toNumberValue(item.saldo) ?? toNumberValue(item.estoque);
 
-    if (direct !== null) {
-      return direct;
+    if (stockBalance === null && direct !== null) {
+      stockBalance = direct;
     }
 
-    const deposits = item.depositos;
-    if (Array.isArray(deposits)) {
-      let total = 0;
-      let found = false;
+    if (stockBalance === null) {
+      const deposits = item.depositos;
+      if (Array.isArray(deposits)) {
+        let total = 0;
+        let found = false;
 
-      for (const depositEntry of deposits) {
-        const deposit = unwrapTinyItem(depositEntry);
-        const desconsiderar = toStringValue(deposit.desconsiderar)?.toUpperCase();
+        for (const depositEntry of deposits) {
+          const deposit = unwrapTinyItem(depositEntry);
+          const desconsiderar = toStringValue(deposit.desconsiderar)?.toUpperCase();
 
-        if (desconsiderar === "S") {
-          continue;
+          if (desconsiderar === "S") {
+            continue;
+          }
+
+          const saldo = toNumberValue(deposit.saldo);
+          if (saldo !== null) {
+            total += saldo;
+            found = true;
+          }
         }
 
-        const saldo = toNumberValue(deposit.saldo);
-        if (saldo !== null) {
-          total += saldo;
-          found = true;
+        if (found) {
+          stockBalance = total;
         }
       }
+    }
 
-      if (found) {
-        return total;
-      }
+    if (availableMultiCompanyStock === null && stockBalance !== null) {
+      availableMultiCompanyStock = Math.max(0, stockBalance - Math.max(0, reservedStock ?? 0));
+    }
+
+    if (stockBalance !== null || reservedStock !== null || availableMultiCompanyStock !== null) {
+      return {
+        accountKey,
+        stockBalance,
+        reservedStock,
+        availableMultiCompanyStock
+      };
     }
   }
 
-  return null;
+  return {
+    accountKey,
+    stockBalance: null,
+    reservedStock: null,
+    availableMultiCompanyStock: null
+  };
 }
 
 export async function callTiny(endpoint: string, params: Record<string, string>, accountKey: TinyAccountKey = "pepper") {
@@ -777,9 +821,14 @@ export async function getTinyContactById(id: string, accountKey: TinyAccountKey 
   return unwrapTinyItem(payload.retorno?.contato);
 }
 
-export async function getTinyStockByProductId(id: string, accountKey: TinyAccountKey = "pepper") {
+export async function getTinyStockSnapshotByProductId(id: string, accountKey: TinyAccountKey = "pepper") {
   const payload = await callTiny("produto.obter.estoque.php", { id }, accountKey);
-  return extractStockQuantity(payload, accountKey);
+  return extractStockSnapshot(payload, accountKey);
+}
+
+export async function getTinyStockByProductId(id: string, accountKey: TinyAccountKey = "pepper") {
+  const snapshot = await getTinyStockSnapshotByProductId(id, accountKey);
+  return snapshot.availableMultiCompanyStock;
 }
 
 async function resolveParentProduct(candidate: TinySearchCandidate) {

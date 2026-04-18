@@ -590,8 +590,8 @@ export function AdminWhatsAppLinksBoard({
       </section>
 
       {selected ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:rounded-[2rem] sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={() => setSelectedId(null)}>
+          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:rounded-[2rem] sm:p-6" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex min-w-0 items-start gap-4">
                 <div className="relative h-20 w-20 overflow-hidden rounded-[1.5rem] border border-slate-100 bg-white">

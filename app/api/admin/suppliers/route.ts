@@ -39,6 +39,10 @@ const updateSchema = z.object({
   canViewFinancialDashboard: z.boolean()
 });
 
+const deleteSchema = z.object({
+  id: z.string().min(1)
+});
+
 function normalizeSlug(value: string) {
   return value
     .normalize("NFD")
@@ -187,6 +191,106 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nao foi possivel atualizar o fornecedor.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const session = await getRouteSession();
+
+  if (!session || session.role !== "ADMIN") {
+    return NextResponse.json({ error: "Nao autorizado." }, { status: 401 });
+  }
+
+  const body = deleteSchema.safeParse(await request.json().catch(() => ({})));
+
+  if (!body.success) {
+    return NextResponse.json({ error: "Fornecedor invalido." }, { status: 400 });
+  }
+
+  if (isLocalOperationalMode()) {
+    return NextResponse.json({ error: "Exclusao indisponivel no modo local." }, { status: 400 });
+  }
+
+  try {
+    const usage = await prisma.supplier.findUnique({
+      where: { id: body.data.id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        users: { select: { id: true }, take: 1 },
+        supplierOrders: { select: { id: true }, take: 1 },
+        replenishmentRequests: { select: { id: true }, take: 1 },
+        catalogProducts: { select: { id: true } }
+      }
+    });
+
+    if (!usage) {
+      return NextResponse.json({ error: "Fornecedor nao encontrado." }, { status: 404 });
+    }
+
+    const hasDependencies =
+      usage.users.length > 0 || usage.supplierOrders.length > 0 || usage.replenishmentRequests.length > 0;
+
+    if (hasDependencies) {
+      await prisma.$transaction(async (tx) => {
+        await tx.catalogProductSupplier.updateMany({
+          where: { supplierId: usage.id },
+          data: { active: false }
+        });
+
+        await tx.supplier.update({
+          where: { id: usage.id },
+          data: {
+            active: false
+          }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorUserId: session.userId,
+            action: "supplier.archive",
+            entityType: "Supplier",
+            entityId: usage.id,
+            metadata: JSON.stringify({
+              slug: usage.slug,
+              name: usage.name,
+              reason: "dependencies_detected"
+            })
+          }
+        });
+      });
+
+      return NextResponse.json({ ok: true, mode: "archived" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.catalogProductSupplier.deleteMany({
+        where: { supplierId: usage.id }
+      });
+
+      await tx.supplier.delete({
+        where: { id: usage.id }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: session.userId,
+          action: "supplier.delete",
+          entityType: "Supplier",
+          entityId: usage.id,
+          metadata: JSON.stringify({
+            slug: usage.slug,
+            name: usage.name
+          })
+        }
+      });
+    });
+
+    return NextResponse.json({ ok: true, mode: "deleted" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Nao foi possivel excluir o fornecedor.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

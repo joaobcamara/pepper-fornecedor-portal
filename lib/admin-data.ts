@@ -1,4 +1,6 @@
 import { getDemoAdminPageData } from "@/lib/demo-data";
+import type { Prisma } from "@prisma/client";
+
 import { buildCatalogProductImageProxyUrl, PORTAL_BRAND_FALLBACK_IMAGE } from "@/lib/catalog-images";
 import { getTrustedFoundationInventoryQuantity } from "@/lib/foundation-inventory";
 import { listFoundationCatalogProducts } from "@/lib/foundation-catalog";
@@ -10,9 +12,14 @@ import {
   getSupplierOrderNextStep,
   getSupplierOrderWorkflowLabel
 } from "@/lib/operations-workflow";
+import {
+  PEPPER_TINY_ACCOUNT_REFERENCES,
+  type PepperTinyAccountKey
+} from "@/lib/pepper-tiny-account-data";
 import { prisma } from "@/lib/prisma";
 import { isLocalOperationalMode } from "@/lib/runtime-mode";
 import {
+  addDays,
   buildSalesPeriodTotals,
   getUnitsSoldInLastDays,
   getDateWindows,
@@ -54,6 +61,7 @@ export type AdminDashboardData = {
     lowStockThreshold: number | null;
     variantCount: number;
     totalStock: number;
+    totalReservedStock?: number;
     totalEstimatedCost: number;
     staleCount: number;
     band: StockBand;
@@ -64,7 +72,25 @@ export type AdminDashboardData = {
     topColorLabel: string | null;
     topSizeLabel: string | null;
     supplierIds: string[];
-    suppliers: Array<{ id: string; name: string }>;
+    suppliers: Array<{
+      id: string;
+      name: string;
+      supplierSalePrice?: number | null;
+      criticalStockThreshold?: number | null;
+      lowStockThreshold?: number | null;
+    }>;
+    accountSummaries?: Array<{
+      accountKey: PepperTinyAccountKey;
+      label: string;
+      logoUrl: string;
+      hasListing: boolean;
+      hasSignal: boolean;
+      salesToday: number;
+      sales7d: number;
+      sales15d: number;
+      sales30d: number;
+      salesTotal: number;
+    }>;
     updatedAt: string;
     relatedOrderCount: number;
     replenishmentCard: {
@@ -91,9 +117,10 @@ export type AdminDashboardData = {
         sku: string;
       sizeCode: string | null;
       sizeLabel: string;
-      colorCode: string | null;
-      colorLabel: string;
+        colorCode: string | null;
+        colorLabel: string;
         quantity: number | null;
+        reservedStock?: number | null;
         band: StockBand;
         sales: SalesPeriodTotals;
         sales15d: number;
@@ -168,6 +195,25 @@ export type AdminDashboardData = {
   tinyConfigured: boolean;
 };
 
+const ACCOUNT_LOGO_URLS: Record<PepperTinyAccountKey, string> = {
+  pepper: "/brand/accounts/pepper.png",
+  showlook: "/brand/accounts/showlook.png",
+  onshop: "/brand/accounts/onshop.png"
+};
+
+function getAccountKeyFromScopedTinyOrderId(value: string | null | undefined): PepperTinyAccountKey | null {
+  if (!value) {
+    return null;
+  }
+
+  const [candidate] = value.split(":");
+  if (candidate === "pepper" || candidate === "showlook" || candidate === "onshop") {
+    return candidate;
+  }
+
+  return null;
+}
+
 export async function getAdminPageData(): Promise<AdminDashboardData> {
   if (isLocalOperationalMode()) {
     return getLocalAdminDashboardData();
@@ -182,7 +228,11 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
   let replenishmentRequests;
   let supplierOrders;
   let variantMetrics;
+  let tinyMappings;
+  let accountStates;
+  let salesOrderItems;
   const windows = getDateWindows();
+  const fifteenDaysAgo = addDays(windows.today, -14);
 
   try {
     [suppliers, recentBatches, syncRuns, catalogProducts, supplierMetrics, productMetrics, replenishmentRequests, supplierOrders] = await Promise.all([
@@ -263,19 +313,96 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
 
   try {
     const catalogVariantIds = catalogProducts.flatMap((product) => product.variants.map((variant) => variant.id));
+    const catalogProductIds = catalogProducts.map((product) => product.id);
+    const productParentSkus = catalogProducts.map((product) => product.parentSku);
 
-    variantMetrics = catalogVariantIds.length
-      ? await prisma.variantSalesMetricDaily.findMany({
-          where: {
-            variantId: {
-              in: catalogVariantIds
-            },
-            date: {
-              gte: windows.oneYearAgo
+    const [loadedVariantMetrics, loadedTinyMappings, loadedAccountStates, loadedSalesOrderItems] = await Promise.all([
+      catalogVariantIds.length
+        ? prisma.variantSalesMetricDaily.findMany({
+            where: {
+              variantId: {
+                in: catalogVariantIds
+              },
+              date: {
+                gte: windows.oneYearAgo
+              }
             }
-          }
-        })
-      : [];
+          })
+        : Promise.resolve([]),
+      catalogVariantIds.length || catalogProductIds.length
+        ? prisma.catalogTinyMapping.findMany({
+            where: {
+              OR: [
+                catalogProductIds.length
+                  ? {
+                      catalogProductId: {
+                        in: catalogProductIds
+                      }
+                    }
+                  : undefined,
+                catalogVariantIds.length
+                  ? {
+                      catalogVariantId: {
+                        in: catalogVariantIds
+                      }
+                    }
+                  : undefined
+              ].filter(Boolean) as Prisma.CatalogTinyMappingWhereInput[]
+            },
+            select: {
+              accountKey: true,
+              catalogProductId: true,
+              catalogVariantId: true
+            }
+          })
+        : Promise.resolve([]),
+      catalogVariantIds.length
+        ? prisma.catalogVariantAccountState.findMany({
+            where: {
+              catalogVariantId: {
+                in: catalogVariantIds
+              }
+            },
+            select: {
+              catalogVariantId: true,
+              accountKey: true,
+              inventorySyncStatus: true,
+              lastStockSyncAt: true
+            }
+          })
+        : Promise.resolve([]),
+      productParentSkus.length
+        ? prisma.salesOrderItem.findMany({
+            where: {
+              skuParent: {
+                in: productParentSkus
+              },
+              salesOrder: {
+                is: {
+                  orderDate: {
+                    gte: windows.oneYearAgo
+                  }
+                }
+              }
+            },
+            select: {
+              skuParent: true,
+              quantity: true,
+              salesOrder: {
+                select: {
+                  tinyOrderId: true,
+                  orderDate: true
+                }
+              }
+            }
+          })
+        : Promise.resolve([])
+    ]);
+
+    variantMetrics = loadedVariantMetrics;
+    tinyMappings = loadedTinyMappings;
+    accountStates = loadedAccountStates;
+    salesOrderItems = loadedSalesOrderItems;
   } catch {
     return getDemoAdminPageData();
   }
@@ -299,6 +426,99 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
     const list = variantMetricMap.get(metric.variantId) ?? [];
     list.push(metric);
     variantMetricMap.set(metric.variantId, list);
+  }
+
+  const variantParentSkuById = new Map<string, string>();
+
+  for (const product of catalogProducts) {
+    for (const variant of product.variants) {
+      variantParentSkuById.set(variant.id, product.parentSku);
+    }
+  }
+
+  const mappingPresenceByParentSku = new Map<string, Set<PepperTinyAccountKey>>();
+  for (const mapping of tinyMappings ?? []) {
+    const accountKey = mapping.accountKey as PepperTinyAccountKey;
+    if (accountKey !== "pepper" && accountKey !== "showlook" && accountKey !== "onshop") {
+      continue;
+    }
+
+    const parentSku =
+      (mapping.catalogVariantId ? variantParentSkuById.get(mapping.catalogVariantId) : null) ??
+      (mapping.catalogProductId
+        ? catalogProducts.find((product) => product.id === mapping.catalogProductId)?.parentSku ?? null
+        : null);
+
+    if (!parentSku) {
+      continue;
+    }
+
+    const current = mappingPresenceByParentSku.get(parentSku) ?? new Set<PepperTinyAccountKey>();
+    current.add(accountKey);
+    mappingPresenceByParentSku.set(parentSku, current);
+  }
+
+  const signalPresenceByParentSku = new Map<string, Set<PepperTinyAccountKey>>();
+  for (const state of accountStates ?? []) {
+    const accountKey = state.accountKey as PepperTinyAccountKey;
+    if (accountKey !== "pepper" && accountKey !== "showlook" && accountKey !== "onshop") {
+      continue;
+    }
+
+    const parentSku = variantParentSkuById.get(state.catalogVariantId);
+    if (!parentSku) {
+      continue;
+    }
+
+    const current = signalPresenceByParentSku.get(parentSku) ?? new Set<PepperTinyAccountKey>();
+    current.add(accountKey);
+    signalPresenceByParentSku.set(parentSku, current);
+  }
+
+  type ProductAccountSalesSummary = {
+    salesToday: number;
+    sales7d: number;
+    sales15d: number;
+    sales30d: number;
+    salesTotal: number;
+  };
+
+  const accountSalesByParentSku = new Map<string, Map<PepperTinyAccountKey, ProductAccountSalesSummary>>();
+  for (const item of salesOrderItems ?? []) {
+    const parentSku = item.skuParent;
+    const orderDate = item.salesOrder.orderDate;
+    const accountKey = getAccountKeyFromScopedTinyOrderId(item.salesOrder.tinyOrderId);
+
+    if (!parentSku || !orderDate || !accountKey) {
+      continue;
+    }
+
+    const byAccount = accountSalesByParentSku.get(parentSku) ?? new Map<PepperTinyAccountKey, ProductAccountSalesSummary>();
+    const current = byAccount.get(accountKey) ?? {
+      salesToday: 0,
+      sales7d: 0,
+      sales15d: 0,
+      sales30d: 0,
+      salesTotal: 0
+    };
+    const quantity = item.quantity ?? 0;
+
+    if (orderDate >= windows.today && orderDate < windows.tomorrow) {
+      current.salesToday += quantity;
+    }
+    if (orderDate >= windows.sevenDaysAgo) {
+      current.sales7d += quantity;
+    }
+    if (orderDate >= fifteenDaysAgo) {
+      current.sales15d += quantity;
+    }
+    if (orderDate >= windows.thirtyDaysAgo) {
+      current.sales30d += quantity;
+    }
+    current.salesTotal += quantity;
+
+    byAccount.set(accountKey, current);
+    accountSalesByParentSku.set(parentSku, byAccount);
   }
 
   const linkedReplenishmentOrderMap = new Map<string, { orderNumber: string; financialStatusLabel: string | null }>();
@@ -377,7 +597,18 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
   }
 
   const productGroups = catalogProducts.map((product) => {
-    const supplierMap = new Map(product.supplierLinks.map((link) => [link.id, { id: link.id, name: link.name }] as const));
+    const supplierMap = new Map(
+      product.supplierLinks.map((link) => [
+        link.id,
+        {
+          id: link.id,
+          name: link.name,
+          supplierSalePrice: link.supplierSalePrice ?? null,
+          criticalStockThreshold: link.criticalStockThreshold ?? null,
+          lowStockThreshold: link.lowStockThreshold ?? null
+        }
+      ] as const)
+    );
     const totalStock = product.totalStock;
     let totalEstimatedCost = 0;
     const colorSales = new Map<string, number>();
@@ -409,6 +640,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         colorCode: variant.colorCode,
         colorLabel: variant.colorLabel,
         quantity: variant.quantity,
+        reservedStock: variant.reservedStock ?? null,
         band,
         sales,
         sales15d,
@@ -443,6 +675,31 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
       [...colorSales.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
     const topSizeLabel =
       [...sizeSales.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? null;
+    const linkedAccounts = mappingPresenceByParentSku.get(product.parentSku) ?? new Set<PepperTinyAccountKey>();
+    const signalAccounts = signalPresenceByParentSku.get(product.parentSku) ?? new Set<PepperTinyAccountKey>();
+    const salesByAccount = accountSalesByParentSku.get(product.parentSku) ?? new Map<PepperTinyAccountKey, ProductAccountSalesSummary>();
+    const accountSummaries = PEPPER_TINY_ACCOUNT_REFERENCES.filter((account) => account.active).map((account) => {
+      const salesSummary = salesByAccount.get(account.key) ?? {
+        salesToday: 0,
+        sales7d: 0,
+        sales15d: 0,
+        sales30d: 0,
+        salesTotal: 0
+      };
+
+      return {
+        accountKey: account.key,
+        label: account.label,
+        logoUrl: ACCOUNT_LOGO_URLS[account.key],
+        hasListing: linkedAccounts.has(account.key),
+        hasSignal: signalAccounts.has(account.key) || salesSummary.salesTotal > 0,
+        salesToday: salesSummary.salesToday,
+        sales7d: salesSummary.sales7d,
+        sales15d: salesSummary.sales15d,
+        sales30d: salesSummary.sales30d,
+        salesTotal: salesSummary.salesTotal
+      };
+    });
 
     return {
         id: product.sourceProductId ?? product.id,
@@ -454,6 +711,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         lowStockThreshold: product.variants[0]?.parentLowStockThreshold ?? null,
       variantCount: product.variants.length,
       totalStock,
+      totalReservedStock: product.totalReservedStock ?? 0,
       totalEstimatedCost,
       staleCount: product.staleVariantCount,
       band,
@@ -470,6 +728,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
       topSizeLabel,
       supplierIds: Array.from(supplierMap.keys()),
       suppliers: Array.from(supplierMap.values()),
+      accountSummaries,
       updatedAt: (product.lastUpdatedAt ?? new Date()).toLocaleString("pt-BR"),
       relatedOrderCount: relatedOrderCountBySku.get(product.parentSku) ?? 0,
       replenishmentCard: latestReplenishmentBySku.get(product.parentSku) ?? null,

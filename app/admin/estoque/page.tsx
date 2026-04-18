@@ -21,6 +21,7 @@ export default async function AdminStockPage() {
     supplierName: group.suppliers[0]?.name ?? "Sem fornecedor",
     variantCount: group.variantCount,
     totalStock: group.totalStock,
+    totalReservedStock: group.totalReservedStock ?? 0,
     totalEstimatedCost: group.totalEstimatedCost,
     band: group.band,
     bandLabel: group.bandLabel,
@@ -30,9 +31,12 @@ export default async function AdminStockPage() {
     salesToday: group.sales["1d"],
     sales7d: group.sales["7d"],
     sales30d: group.sales["1m"],
+    updatedAt: group.updatedAt,
+    relatedOrderCount: group.relatedOrderCount,
     topColorLabel: group.topColorLabel,
     topSizeLabel: group.topSizeLabel,
-    sales: group.sales
+    sales: group.sales,
+    variants: group.variants
   }));
 
   const summary = {

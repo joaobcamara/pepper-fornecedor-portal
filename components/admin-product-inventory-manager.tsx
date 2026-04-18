@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   MessageCircle,
   PackagePlus,
+  RefreshCw,
   Search,
   Sparkles,
   X
@@ -18,7 +19,7 @@ import { AdminImportConsole } from "@/components/admin-import-console";
 import { ProductOperationalStrip } from "@/components/product-operational-strip";
 import { cn } from "@/lib/cn";
 import { suggestPurchaseQuantity, summarizePurchaseSuggestions } from "@/lib/reorder-advisor";
-import { SALES_PERIOD_OPTIONS, type SalesPeriodKey, type SalesPeriodTotals } from "@/lib/sales-metrics";
+import { SALES_PERIOD_OPTIONS, safeCoverageDays, type SalesPeriodKey, type SalesPeriodTotals } from "@/lib/sales-metrics";
 
 type SupplierOption = {
   id: string;
@@ -34,6 +35,7 @@ type VariantRow = {
   colorCode: string | null;
   colorLabel: string;
   quantity: number | null;
+  reservedStock?: number | null;
   band: "critical" | "low" | "ok" | "unknown";
   sales: SalesPeriodTotals;
   sales15d: number;
@@ -54,6 +56,7 @@ type ProductGroup = {
   lowStockThreshold: number | null;
   variantCount: number;
   totalStock: number;
+  totalReservedStock?: number;
   totalEstimatedCost: number;
   staleCount: number;
   band: "critical" | "low" | "ok" | "unknown";
@@ -67,6 +70,21 @@ type ProductGroup = {
   suppliers: Array<{
     id: string;
     name: string;
+    supplierSalePrice?: number | null;
+    criticalStockThreshold?: number | null;
+    lowStockThreshold?: number | null;
+  }>;
+  accountSummaries?: Array<{
+    accountKey: "pepper" | "showlook" | "onshop";
+    label: string;
+    logoUrl: string;
+    hasListing: boolean;
+    hasSignal: boolean;
+    salesToday: number;
+    sales7d: number;
+    sales15d: number;
+    sales30d: number;
+    salesTotal: number;
   }>;
   updatedAt: string;
   relatedOrderCount: number;
@@ -105,6 +123,45 @@ type DashboardSummary = {
   financialReviewCount: number;
   paymentPendingCount: number;
 };
+
+const DEFAULT_ACCOUNT_SUMMARIES: NonNullable<ProductGroup["accountSummaries"]> = [
+  {
+    accountKey: "pepper",
+    label: "Pepper",
+    logoUrl: "/brand/accounts/pepper.png",
+    hasListing: false,
+    hasSignal: false,
+    salesToday: 0,
+    sales7d: 0,
+    sales15d: 0,
+    sales30d: 0,
+    salesTotal: 0
+  },
+  {
+    accountKey: "showlook",
+    label: "Show Look",
+    logoUrl: "/brand/accounts/showlook.png",
+    hasListing: false,
+    hasSignal: false,
+    salesToday: 0,
+    sales7d: 0,
+    sales15d: 0,
+    sales30d: 0,
+    salesTotal: 0
+  },
+  {
+    accountKey: "onshop",
+    label: "On Shop",
+    logoUrl: "/brand/accounts/onshop.png",
+    hasListing: false,
+    hasSignal: false,
+    salesToday: 0,
+    sales7d: 0,
+    sales15d: 0,
+    sales30d: 0,
+    salesTotal: 0
+  }
+];
 
 type GroupDraft = {
   internalName: string;
@@ -200,6 +257,80 @@ function describeSalesRhythm(params: { sales7d: number; sales15d: number; sales3
   };
 }
 
+function describeVariantDemandSignal(params: {
+  salesToday: number;
+  sales7d: number;
+  sales15d: number;
+  sales30d: number;
+  maxSales30d: number;
+  averageSales30d: number;
+}) {
+  const recentPace = params.sales7d / 7;
+  const midPace = Math.max(params.sales15d / 15, params.sales30d / 30, 0);
+
+  if (params.salesToday <= 0 && params.sales7d <= 0 && params.sales30d <= 0) {
+    return {
+      label: "Sem giro",
+      description: "Sem vendas recentes",
+      tone: "bg-slate-100 text-slate-600"
+    };
+  }
+
+  if (params.sales30d > 0 && params.sales30d === params.maxSales30d) {
+    return {
+      label: "Mais forte",
+      description: "Lider deste produto",
+      tone: "bg-emerald-100 text-emerald-700"
+    };
+  }
+
+  if (recentPace > 0 && recentPace >= midPace * 1.15) {
+    return {
+      label: "Acelerando",
+      description: "Curto prazo acima da media",
+      tone: "bg-sky-100 text-sky-700"
+    };
+  }
+
+  if (params.sales30d >= Math.max(1, params.averageSales30d * 1.2)) {
+    return {
+      label: "Giro forte",
+      description: "Acima da media do mix",
+      tone: "bg-violet-100 text-violet-700"
+    };
+  }
+
+  if (midPace > 0 && recentPace <= midPace * 0.85) {
+    return {
+      label: "Desacelerando",
+      description: "Curto prazo abaixo da media",
+      tone: "bg-amber-100 text-amber-700"
+    };
+  }
+
+  return {
+    label: "Estavel",
+    description: "Fluxo consistente",
+    tone: "bg-slate-100 text-slate-700"
+  };
+}
+
+function accountPresenceTone(summary: {
+  hasListing: boolean;
+  hasSignal: boolean;
+  salesTotal: number;
+}) {
+  if (summary.hasSignal || summary.salesTotal > 0) {
+    return "border-[#f0ceb7] bg-[#fff8f1] text-slate-900";
+  }
+
+  if (summary.hasListing) {
+    return "border-slate-200 bg-slate-50 text-slate-500";
+  }
+
+  return "border-slate-200 bg-slate-50/70 text-slate-400";
+}
+
 function ProductReferenceThumbnail({
   imageUrl,
   alt,
@@ -218,7 +349,7 @@ function ProductReferenceThumbnail({
   const fallback = isBrandFallbackImage(resolvedImageUrl);
   const dimensionClassName =
     size === "hero"
-      ? "h-32 w-32 rounded-[2rem]"
+      ? "h-44 w-44 rounded-[2.2rem]"
       : size === "panel"
         ? "h-28 w-28 rounded-[1.85rem]"
         : "h-28 w-28 rounded-[1.85rem]";
@@ -325,6 +456,9 @@ export function AdminProductInventoryManager({
   const [orderFeedbackTone, setOrderFeedbackTone] = useState<"success" | "warning">("success");
   const [orderError, setOrderError] = useState<string | null>(null);
   const [creatingOrder, setCreatingOrder] = useState(false);
+  const [reconcilingSku, setReconcilingSku] = useState<string | null>(null);
+  const [reconcileFeedback, setReconcileFeedback] = useState<string | null>(null);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
 
   useEffect(() => {
     const flash = window.sessionStorage.getItem(PRODUCT_ORDER_FLASH_KEY);
@@ -357,6 +491,22 @@ export function AdminProductInventoryManager({
 
   const selectedSales15d = useMemo(
     () => (selectedGroup ? selectedGroup.variants.reduce((sum, variant) => sum + variant.sales15d, 0) : 0),
+    [selectedGroup]
+  );
+
+  const selectedVariantSalesAverage30d = useMemo(() => {
+    if (!selectedGroup || selectedGroup.variants.length === 0) {
+      return 0;
+    }
+
+    return selectedGroup.variants.reduce((sum, variant) => sum + variant.sales["1m"], 0) / selectedGroup.variants.length;
+  }, [selectedGroup]);
+
+  const selectedVariantSalesMax30d = useMemo(
+    () =>
+      selectedGroup
+        ? selectedGroup.variants.reduce((highest, variant) => Math.max(highest, variant.sales["1m"]), 0)
+        : 0,
     [selectedGroup]
   );
 
@@ -406,6 +556,18 @@ export function AdminProductInventoryManager({
     return suppliers.filter((supplier) => selectedDraft.supplierIds.includes(supplier.id));
   }, [selectedDraft, suppliers]);
 
+  const selectedLinkedSupplier = useMemo(() => {
+    if (!selectedGroup) {
+      return null;
+    }
+
+    return (
+      selectedGroup.suppliers.find((supplier) => supplier.id === orderSupplierId) ??
+      selectedGroup.suppliers[0] ??
+      null
+    );
+  }, [orderSupplierId, selectedGroup]);
+
   const estimatedOrderTotal = useMemo(() => {
     if (!selectedGroup) {
       return 0;
@@ -453,12 +615,14 @@ export function AdminProductInventoryManager({
       return;
     }
 
-    setOrderSupplierId(selectedGroup.supplierIds[0] ?? suppliers[0]?.id ?? "");
+    setOrderSupplierId(selectedGroup.supplierIds[0] ?? "");
     setOrderNote("");
     setOrderQuantities({});
     setOrderFeedback(null);
     setOrderFeedbackTone("success");
     setOrderError(null);
+    setReconcileFeedback(null);
+    setReconcileError(null);
   }, [selectedGroup, suppliers]);
 
   function updateDraft(parentSku: string, patch: Partial<GroupDraft>) {
@@ -774,6 +938,129 @@ export function AdminProductInventoryManager({
     }
   }
 
+  async function reconcileSelectedProductStock() {
+    if (!selectedGroup) {
+      return;
+    }
+
+    setReconcileFeedback(null);
+    setReconcileError(null);
+    setReconcilingSku(selectedGroup.parentSku);
+
+    try {
+      const response = await fetch("/api/admin/products/reconcile-stock", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          parentSku: selectedGroup.parentSku
+        })
+      });
+
+      const payload = (await response.json()) as {
+        error?: string;
+        summary?: {
+          reconciled: number;
+          failed: number;
+          authoritativeAccountKey: string;
+        };
+      };
+
+      if (!response.ok || !payload.summary) {
+        setReconcileError(payload.error ?? "Nao foi possivel reconciliar as filhas deste produto agora.");
+        return;
+      }
+
+      setReconcileFeedback(
+        `${payload.summary.reconciled} filhas reconciliadas pela ${payload.summary.authoritativeAccountKey}. ${
+          payload.summary.failed > 0 ? `${payload.summary.failed} falharam.` : "Tudo certo neste lote."
+        }`
+      );
+      window.location.reload();
+    } catch (requestError) {
+      setReconcileError(
+        requestError instanceof Error ? requestError.message : "Nao foi possivel reconciliar as filhas deste produto agora."
+      );
+    } finally {
+      setReconcilingSku(null);
+    }
+  }
+
+  function renderVariantInsightCard(item: VariantRow, contextColorLabel?: string | null) {
+    const coverageDays = safeCoverageDays(item.quantity ?? 0, item.sales["1m"]);
+    const demandSignal = describeVariantDemandSignal({
+      salesToday: item.sales["1d"],
+      sales7d: item.sales["7d"],
+      sales15d: item.sales15d,
+      sales30d: item.sales["1m"],
+      maxSales30d: selectedVariantSalesMax30d,
+      averageSales30d: selectedVariantSalesAverage30d
+    });
+
+    return (
+      <div key={item.sku} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+            <p className="mt-1 text-[11px] font-medium text-slate-400">{item.sku}</p>
+            <p className="text-[11px] text-slate-500">{contextColorLabel ?? item.colorLabel}</p>
+          </div>
+          <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
+            {item.band === "critical" ? "Critico" : item.band === "low" ? "Baixo" : item.band === "ok" ? "Saudavel" : "Sem leitura"}
+          </span>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+          <InfoPill label="Hoje" value={String(item.sales["1d"])} />
+          <InfoPill label="7d" value={String(item.sales["7d"])} />
+          <InfoPill label="15d" value={String(item.sales15d)} />
+          <InfoPill label="30d" value={String(item.sales["1m"])} />
+          <InfoPill label="Saldo" value={item.quantity === null ? "-" : String(item.quantity)} />
+          <InfoPill label="Reservado" value={String(item.reservedStock ?? 0)} />
+          <InfoPill label="Cobertura" value={coverageDays === null ? "Sem base" : `${coverageDays}d`} />
+          <InfoPill label="Sinal" value={demandSignal.label} tone={demandSignal.tone} />
+        </div>
+
+        {selectedLinkedSupplier ? (
+          <div className="mt-3 rounded-xl border border-[#f1dccf] bg-white px-3 py-2 text-[11px] text-slate-600">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="font-semibold text-slate-700">{selectedLinkedSupplier.name}</span>
+              <span>Critica {selectedLinkedSupplier.criticalStockThreshold ?? "-"}</span>
+              <span>Baixo {selectedLinkedSupplier.lowStockThreshold ?? "-"}</span>
+              <span>
+                Preco {selectedLinkedSupplier.supplierSalePrice === null || selectedLinkedSupplier.supplierSalePrice === undefined ? "-" : formatCurrency(selectedLinkedSupplier.supplierSalePrice)}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500">
+          <span className="font-semibold text-slate-700">{demandSignal.description}</span>
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
+            <input
+              type="number"
+              min={0}
+              value={orderQuantities[item.sku] ?? ""}
+              onChange={(event) =>
+                setOrderQuantities((current) => ({
+                  ...current,
+                  [item.sku]: Number(event.target.value || 0)
+                }))
+              }
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+              placeholder="Qtd"
+            />
+          </label>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <section className="space-y-6">
       <section className="rounded-[2rem] border border-white/70 bg-white/88 p-6 shadow-panel backdrop-blur">
@@ -910,7 +1197,7 @@ export function AdminProductInventoryManager({
                   <p className="text-[0.72rem] font-semibold uppercase tracking-[0.25em] text-slate-400">{group.parentSku}</p>
                   <h3 className="mt-2 text-xl font-semibold text-slate-900">{shortenProductTitle(group.internalName)}</h3>
                   <p className="mt-1 text-sm text-slate-500">
-                    {group.variantCount} variacoes • estoque total {group.totalStock}
+                    {group.variantCount} variacoes • multiempresa {group.totalStock} • reservado {group.totalReservedStock ?? 0}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
                     <span className="rounded-full bg-white/80 px-3 py-1">Atualizado {group.updatedAt}</span>
@@ -991,8 +1278,8 @@ export function AdminProductInventoryManager({
       )}
 
       {selectedGroup && selectedDraft ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
-          <div className="max-h-[100vh] w-full overflow-y-auto rounded-none border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[94vh] sm:max-w-[min(97vw,112rem)] sm:rounded-[2rem] sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4" onClick={() => setSelectedSku(null)}>
+          <div className="max-h-[100vh] w-full overflow-y-auto rounded-none border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[94vh] sm:max-w-[min(97vw,112rem)] sm:rounded-[2rem] sm:p-6" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex min-w-0 flex-1 items-start gap-4">
                 <ProductReferenceThumbnail
@@ -1025,8 +1312,10 @@ export function AdminProductInventoryManager({
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-6">
-              <InfoMetric label="Estoque total" value={String(selectedGroup.totalStock)} tone="bg-slate-50 text-slate-700" />
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
+              <InfoMetric label="Saldo atual" value={String(selectedGroup.totalStock)} tone="bg-slate-50 text-slate-700" />
+              <InfoMetric label="Reservado" value={String(selectedGroup.totalReservedStock ?? 0)} tone="bg-slate-50 text-slate-700" />
+              <InfoMetric label="Vendas hoje" value={String(selectedGroup.sales["1d"])} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Vendas 7D" value={String(selectedGroup.sales["7d"])} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Vendas 15D" value={String(selectedSales15d)} tone="bg-slate-50 text-slate-700" />
               <InfoMetric label="Vendas 30D" value={String(selectedGroup.sales["1m"])} tone="bg-slate-50 text-slate-700" />
@@ -1036,7 +1325,128 @@ export function AdminProductInventoryManager({
                 tone="bg-slate-50 text-slate-700"
               />
               <InfoMetric label="Pedidos ligados" value={String(selectedGroup.relatedOrderCount)} tone="bg-slate-50 text-slate-700" />
-              <InfoMetric label="Saude" value={selectedGroup.bandLabel} tone={bandBadgeTone(selectedGroup.band)} />
+            </div>
+
+            <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+              <section className="rounded-[1.7rem] border border-slate-200 bg-slate-50/80 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">Fornecedores vinculados</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Clique para definir o contexto de compra. Critica e preco aparecem aqui so como leitura visual.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={reconcilingSku !== null}
+                    onClick={() => void reconcileSelectedProductStock()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[#f2d6c5] bg-white px-4 py-3 text-sm font-semibold text-[#a65228] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                  >
+                    {reconcilingSku === selectedGroup.parentSku ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    {reconcilingSku === selectedGroup.parentSku ? "Chamando filhas..." : "Atualizar filhas por lotes"}
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {selectedGroup.suppliers.length > 0 ? (
+                    selectedGroup.suppliers.map((supplier) => {
+                      const isActiveSupplier = supplier.id === selectedLinkedSupplier?.id;
+
+                      return (
+                        <button
+                          key={`${selectedGroup.parentSku}-${supplier.id}`}
+                          type="button"
+                          onClick={() => setOrderSupplierId(supplier.id)}
+                          className={cn(
+                            "min-w-[13rem] rounded-[1.4rem] border px-4 py-3 text-left transition",
+                            isActiveSupplier
+                              ? "border-[#f0c9b1] bg-[#fff8f1] shadow-soft"
+                              : "border-slate-200 bg-white hover:border-[#f0c9b1]"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-slate-900">{supplier.name}</p>
+                            {isActiveSupplier ? (
+                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                                Pedido ativo
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] text-slate-500">
+                            <InfoPill
+                              label="Preco"
+                              value={supplier.supplierSalePrice === null || supplier.supplierSalePrice === undefined ? "-" : formatCurrency(supplier.supplierSalePrice)}
+                              compact
+                            />
+                            <InfoPill
+                              label="Critica"
+                              value={supplier.criticalStockThreshold === null || supplier.criticalStockThreshold === undefined ? "-" : String(supplier.criticalStockThreshold)}
+                              compact
+                            />
+                            <InfoPill
+                              label="Baixo"
+                              value={supplier.lowStockThreshold === null || supplier.lowStockThreshold === undefined ? "-" : String(supplier.lowStockThreshold)}
+                              compact
+                            />
+                          </div>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <span className="rounded-full border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-400">
+                      Nenhum fornecedor vinculado
+                    </span>
+                  )}
+                </div>
+
+                {reconcileFeedback ? (
+                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    {reconcileFeedback}
+                  </div>
+                ) : null}
+                {reconcileError ? (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {reconcileError}
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="rounded-[1.7rem] border border-[#f2d8ca] bg-[#fffaf7] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Contas Tiny deste produto</p>
+                    <p className="mt-1 text-sm text-slate-500">Cinza = sem sinal na fundacao. Colorido = anuncio vivo por essa conta.</p>
+                  </div>
+                  <span className={cn("rounded-full px-3 py-1 text-xs font-semibold", bandBadgeTone(selectedGroup.band))}>
+                    {selectedGroup.bandLabel}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-3">
+                  {(selectedGroup.accountSummaries && selectedGroup.accountSummaries.length > 0
+                    ? selectedGroup.accountSummaries
+                    : DEFAULT_ACCOUNT_SUMMARIES
+                  ).map((account) => (
+                    <div
+                      key={`${selectedGroup.parentSku}-${account.accountKey}`}
+                      className={cn("rounded-[1.4rem] border px-3 py-3 text-center", accountPresenceTone(account))}
+                    >
+                      <div className="mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-[1.2rem] bg-white/90 p-2 shadow-inner">
+                        <img
+                          src={account.logoUrl}
+                          alt={account.label}
+                          className={cn("h-full w-full object-contain", account.hasSignal ? "" : "grayscale opacity-50")}
+                        />
+                      </div>
+                      <p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em]">{account.label}</p>
+                      <p className="mt-1 text-sm font-semibold">{account.salesTotal} vendas</p>
+                      <p className="mt-1 text-[11px] opacity-75">
+                        Hoje {account.salesToday} • 7d {account.sales7d}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
 
             <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_repeat(3,minmax(0,0.7fr))]">
@@ -1047,36 +1457,18 @@ export function AdminProductInventoryManager({
                   <p className="mt-2 leading-6">{selectedSalesRhythm.description}</p>
                 </div>
               ) : null}
-              <InfoBox label="Cor lider" value={selectedGroup.topColorLabel ?? "Sem base"} />
-              <InfoBox label="Tamanho lider" value={selectedGroup.topSizeLabel ?? "Sem base"} />
-              <InfoBox label="Movimento" value={selectedGroup.movementBadge} />
+              <InfoBox label="Cor que mais sai" value={selectedGroup.topColorLabel ?? "Sem base"} />
+              <InfoBox label="Tamanho que mais sai" value={selectedGroup.topSizeLabel ?? "Sem base"} />
+              <InfoBox label="Momento do produto" value={selectedGroup.movementBadge} />
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              {SALES_PERIOD_OPTIONS.map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setActivePeriod(option.key)}
-                  className={cn(
-                    "rounded-full border px-4 py-2 text-sm font-semibold transition",
-                    activePeriod === option.key
-                      ? "border-[#f2b79a] bg-[#fff1e7] text-[#a94c25]"
-                      : "border-slate-200 bg-white text-slate-600"
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-5 grid gap-6 xl:grid-cols-[20rem_minmax(0,1fr)] 2xl:grid-cols-[22rem_minmax(0,1fr)]">
+            <div className="mt-5 grid gap-6 xl:grid-cols-[18rem_minmax(0,1fr)] 2xl:grid-cols-[20rem_minmax(0,1fr)]">
               <div className="space-y-5">
                 <section className="rounded-[1.7rem] border border-slate-200 bg-slate-50/80 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-900">Configuracao do card no portal</p>
-                        <p className="mt-1 text-sm text-slate-500">Catalogo canonico da fundacao, com visibilidade do card, fornecedores e limites operacionais.</p>
+                      <p className="text-sm font-semibold text-slate-900">Card no portal</p>
+                      <p className="mt-1 text-sm text-slate-500">A fundacao continua dona do catalogo. Aqui voce so controla a visibilidade do card.</p>
                     </div>
                     <button
                       type="button"
@@ -1091,43 +1483,19 @@ export function AdminProductInventoryManager({
 
                   <div className="mt-4 grid gap-4">
                     <label className="block">
-                        <span className="mb-2 block text-sm font-semibold text-slate-700">Nome vindo da fundacao</span>
-                        <input
-                          value={selectedDraft.internalName}
-                          readOnly
-                          disabled
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 outline-none"
-                        />
-                        <span className="mt-2 block text-xs text-slate-500">A edicao estrutural do produto acontece em outro sistema. Aqui o portal apenas consome o catalogo canonico.</span>
-                      </label>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-semibold text-slate-700">Critico padrao</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={selectedDraft.criticalStockThreshold}
-                          onChange={(event) => updateDraft(selectedGroup.parentSku, { criticalStockThreshold: event.target.value })}
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-semibold text-slate-700">Baixo padrao</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={selectedDraft.lowStockThreshold}
-                          onChange={(event) => updateDraft(selectedGroup.parentSku, { lowStockThreshold: event.target.value })}
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
-                        />
-                      </label>
-                    </div>
+                      <span className="mb-2 block text-sm font-semibold text-slate-700">Nome vindo da fundacao</span>
+                      <input
+                        value={selectedDraft.internalName}
+                        readOnly
+                        disabled
+                        className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500 outline-none"
+                      />
+                    </label>
 
                     <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                          <p className="text-sm font-semibold text-slate-900">Card visivel no portal</p>
-                          <p className="text-xs text-slate-500">Quando oculto, o card sai do portal do fornecedor sem apagar o produto canonico da fundacao.</p>
+                        <p className="text-sm font-semibold text-slate-900">Card visivel no portal</p>
+                        <p className="text-xs text-slate-500">Ocultar remove do fornecedor sem apagar o produto canonico.</p>
                       </div>
                       <button
                         type="button"
@@ -1141,35 +1509,7 @@ export function AdminProductInventoryManager({
                       </button>
                     </div>
 
-                    <div>
-                      <p className="text-sm font-semibold text-slate-700">Fornecedores vinculados</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {suppliers.map((supplier) => {
-                          const active = selectedDraft.supplierIds.includes(supplier.id);
-                          return (
-                            <button
-                              key={`${selectedGroup.parentSku}-${supplier.id}`}
-                              type="button"
-                              onClick={() =>
-                                updateDraft(selectedGroup.parentSku, {
-                                  supplierIds: active
-                                    ? selectedDraft.supplierIds.filter((item) => item !== supplier.id)
-                                    : [...selectedDraft.supplierIds, supplier.id]
-                                })
-                              }
-                              className={cn(
-                                "rounded-2xl border px-4 py-2 text-sm font-semibold transition",
-                                active
-                                  ? "border-[#f2b79a] bg-[#fff1e7] text-[#a94c25]"
-                                  : "border-slate-200 bg-white text-slate-600"
-                              )}
-                            >
-                              {supplier.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <InfoBox label="Fornecedores" value={selectedGroup.suppliers.length > 0 ? `${selectedGroup.suppliers.length} vinculados` : "Sem vinculo"} />
                   </div>
                 </section>
 
@@ -1192,21 +1532,12 @@ export function AdminProductInventoryManager({
                   </div>
 
                   <div className="mt-4 grid gap-4">
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-semibold text-slate-700">Fornecedor do pedido</span>
-                      <select
-                        value={orderSupplierId}
-                        onChange={(event) => setOrderSupplierId(event.target.value)}
-                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none"
-                      >
-                        <option value="">Selecione</option>
-                        {selectableSuppliers.map((supplier) => (
-                          <option key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <div className="rounded-2xl border border-[#f1dccf] bg-white px-4 py-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Fornecedor ativo do pedido</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">
+                        {selectedLinkedSupplier?.name ?? "Nenhum fornecedor vinculado"}
+                      </p>
+                    </div>
 
                     <label className="block">
                       <span className="mb-2 block text-sm font-semibold text-slate-700">Observacao do admin</span>
@@ -1218,9 +1549,9 @@ export function AdminProductInventoryManager({
                       />
                     </label>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <InfoMetric label="Variacoes com qtd" value={String(orderVariantCount)} tone="bg-white text-slate-700" />
-                      <InfoMetric label="Valor estimado" value={formatCurrency(estimatedOrderTotal)} tone="bg-white text-slate-700" />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <InfoBox label="Variacoes com qtd" value={String(orderVariantCount)} />
+                      <InfoBox label="Valor estimado" value={formatCurrency(estimatedOrderTotal)} />
                     </div>
 
                     {pepperIaSummary ? (
@@ -1232,10 +1563,9 @@ export function AdminProductInventoryManager({
                             : "border-emerald-200 bg-emerald-50 text-emerald-700"
                         )}
                       >
-                        <p className="font-semibold">{pepperIaSummary.confidenceLabel}</p>
-                        <p className="mt-1">{pepperIaSummary.readinessMessage}</p>
-                      </div>
-                    ) : null}
+                          {pepperIaSummary.appliedMessage}
+                        </div>
+                      ) : null}
 
                     {orderFeedback ? (
                       <div
@@ -1302,13 +1632,100 @@ export function AdminProductInventoryManager({
               <section className="rounded-[1.7rem] border border-[#f2d8ca] bg-[#fffaf7] p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <h4 className="text-lg font-semibold text-slate-900">Grade cor x tamanho</h4>
+                    <h4 className="text-lg font-semibold text-slate-900">Leitura por variacao</h4>
                     <p className="mt-1 text-sm text-slate-500">
-                      Ajuste estoque critico por variacao e monte o pedido usando a mesma grade.
+                      Hoje, 7d, 15d, 30d, saldo, reservado, cobertura e sinal de giro para apoiar compra inteligente.
                     </p>
                   </div>
                   <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
-                    Filtro de vendas ativo: {SALES_PERIOD_OPTIONS.find((option) => option.key === activePeriod)?.label}
+                    Contexto do pedido: {selectedLinkedSupplier?.name ?? "Sem fornecedor ativo"}
+                  </span>
+                </div>
+
+                <div className="mt-5 space-y-4 xl:hidden">
+                  {matrix.map((row) => (
+                    <div key={`${row.color}-insight-mobile`} className="rounded-[1.4rem] border border-[#f4d7c7] bg-white p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h5 className="text-base font-semibold text-slate-900">{row.color}</h5>
+                        <span className="rounded-full bg-[#fff3ec] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a94c25]">
+                          {row.items.filter(Boolean).length} tamanhos
+                        </span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {row.items.map((item) => (item ? renderVariantInsightCard(item, row.color) : null))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-5 hidden xl:block">
+                  {isSingleSizeGroup ? (
+                    <div className="space-y-4 rounded-[1.4rem] border border-[#f4d7c7] bg-white p-4">
+                      {matrix.map((row) => (
+                        <section key={`${row.color}-insight`} className="rounded-[1.4rem] border border-[#f8e4d9] bg-[#fffaf6] p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <h5 className="text-base font-semibold text-slate-900">{row.color}</h5>
+                            <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a94c25]">
+                              {sizes[0] ?? "Unico"}
+                            </span>
+                          </div>
+                          <div className="mt-4 grid grid-cols-5 gap-3">
+                            {row.items.filter(Boolean).map((item) => renderVariantInsightCard(item!, row.color))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="overflow-hidden rounded-[1.4rem] border border-[#f4d7c7]">
+                      <div
+                        className="grid bg-[#fff3ec] text-xs font-semibold uppercase tracking-[0.16em] text-slate-500"
+                        style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
+                      >
+                        <div className="px-4 py-3">Cor</div>
+                        {sizes.map((size) => (
+                          <div key={size} className="px-4 py-3 text-center">
+                            {size}
+                          </div>
+                        ))}
+                      </div>
+
+                      {matrix.map((row) => (
+                        <div
+                          key={`${row.color}-insight-grid`}
+                          className="grid border-t border-[#f8e4d9] bg-white"
+                          style={{ gridTemplateColumns: `minmax(140px,0.8fr) repeat(${sizes.length}, minmax(0,1fr))` }}
+                        >
+                          <div className="px-4 py-4 text-sm font-semibold text-slate-900">{row.color}</div>
+                          {row.items.map((item, index) =>
+                            item ? (
+                              <div key={item.sku} className="px-3 py-3">
+                                {renderVariantInsightCard(item, row.color)}
+                              </div>
+                            ) : (
+                              <div key={`${row.color}-${sizes[index]}-empty`} className="px-3 py-3">
+                                <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-300">
+                                  -
+                                </div>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="hidden rounded-[1.7rem] border border-[#f2d8ca] bg-[#fffaf7] p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold text-slate-900">Leitura por variacao</h4>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Hoje, 7d, 15d, 30d, saldo, reservado, cobertura e sinal de giro para apoiar compra inteligente.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                    Contexto do pedido: {selectedLinkedSupplier?.name ?? "Sem fornecedor ativo"}
                   </span>
                 </div>
 
@@ -1335,6 +1752,7 @@ export function AdminProductInventoryManager({
                                 <div>
                                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{sizes[index]}</p>
                                   <p className="mt-2 text-xl font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+                                  <p className="mt-1 text-[11px] font-medium text-slate-400">{item.sku}</p>
                                   <p className="text-[11px] text-slate-500">{row.color}</p>
                                 </div>
                                 <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
@@ -1345,35 +1763,11 @@ export function AdminProductInventoryManager({
                               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
                                 <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {item.sales[activePeriod]}</div>
                                 <div className="rounded-xl bg-white px-3 py-2">Custo: {formatCurrency(item.unitCost ?? 0)}</div>
+                                <div className="rounded-xl bg-white px-3 py-2">Reservado: {item.reservedStock ?? 0}</div>
+                                <div className="rounded-xl bg-white px-3 py-2">Disponível: {item.quantity ?? "-"}</div>
                               </div>
 
                               <div className="mt-3 grid gap-2">
-                                <label className="block">
-                                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={variantDraft?.criticalStockThreshold ?? ""}
-                                    onChange={(event) =>
-                                      updateVariantDraft(selectedGroup.parentSku, item.sku, "criticalStockThreshold", event.target.value)
-                                    }
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                    placeholder={`Padrao ${selectedDraft.criticalStockThreshold || item.effectiveCriticalStockThreshold}`}
-                                  />
-                                </label>
-                                <label className="block">
-                                  <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    value={variantDraft?.lowStockThreshold ?? ""}
-                                    onChange={(event) =>
-                                      updateVariantDraft(selectedGroup.parentSku, item.sku, "lowStockThreshold", event.target.value)
-                                    }
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                    placeholder={`Padrao ${selectedDraft.lowStockThreshold || item.effectiveLowStockThreshold}`}
-                                  />
-                                </label>
                                 <label className="block">
                                   <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
                                   <input
@@ -1410,7 +1804,7 @@ export function AdminProductInventoryManager({
                               {sizes[0] ?? "Unico"}
                             </span>
                           </div>
-                          <div className="mt-4 grid grid-cols-6 gap-3">
+                          <div className="mt-4 grid grid-cols-5 gap-3">
                             {row.items.filter(Boolean).map((item) => {
                               const safeItem = item!;
                               const variantDraft = selectedDraft.variants[safeItem.sku];
@@ -1420,6 +1814,7 @@ export function AdminProductInventoryManager({
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
                                       <p className="text-lg font-semibold text-slate-900">{safeItem.quantity ?? "-"}</p>
+                                      <p className="mt-1 text-[11px] font-medium text-slate-400">{safeItem.sku}</p>
                                       <p className="text-[11px] text-slate-500">{row.color}</p>
                                     </div>
                                     <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(safeItem.band))}>
@@ -1429,34 +1824,10 @@ export function AdminProductInventoryManager({
                                   <div className="mt-3 grid gap-2 text-xs text-slate-600">
                                     <div className="rounded-xl bg-white px-3 py-2">Vendas {activePeriod.toUpperCase()}: {safeItem.sales[activePeriod]}</div>
                                     <div className="rounded-xl bg-white px-3 py-2">Custo base: {formatCurrency(safeItem.unitCost ?? 0)}</div>
+                                    <div className="rounded-xl bg-white px-3 py-2">Reservado: {safeItem.reservedStock ?? 0}</div>
+                                    <div className="rounded-xl bg-white px-3 py-2">Disponível: {safeItem.quantity ?? "-"}</div>
                                   </div>
                                   <div className="mt-3 grid gap-2">
-                                    <label className="block">
-                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={variantDraft?.criticalStockThreshold ?? ""}
-                                        onChange={(event) =>
-                                          updateVariantDraft(selectedGroup.parentSku, safeItem.sku, "criticalStockThreshold", event.target.value)
-                                        }
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                        placeholder={`Padrao ${selectedDraft.criticalStockThreshold || safeItem.effectiveCriticalStockThreshold}`}
-                                      />
-                                    </label>
-                                    <label className="block">
-                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={variantDraft?.lowStockThreshold ?? ""}
-                                        onChange={(event) =>
-                                          updateVariantDraft(selectedGroup.parentSku, safeItem.sku, "lowStockThreshold", event.target.value)
-                                        }
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                        placeholder={`Padrao ${selectedDraft.lowStockThreshold || safeItem.effectiveLowStockThreshold}`}
-                                      />
-                                    </label>
                                     <label className="block">
                                       <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
                                       <input
@@ -1521,6 +1892,7 @@ export function AdminProductInventoryManager({
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
                                       <p className="text-lg font-semibold text-slate-900">{item.quantity ?? "-"}</p>
+                                      <p className="mt-1 text-[11px] font-medium text-slate-400">{item.sku}</p>
                                       <p className="text-[11px] text-slate-500">{row.color}</p>
                                     </div>
                                     <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", bandBadgeTone(item.band))}>
@@ -1533,38 +1905,14 @@ export function AdminProductInventoryManager({
                                     <div className="rounded-xl bg-white px-3 py-2">
                                       Custo base: {formatCurrency(item.unitCost ?? 0)}
                                     </div>
+                                    <div className="rounded-xl bg-white px-3 py-2">Reservado: {item.reservedStock ?? 0}</div>
+                                    <div className="rounded-xl bg-white px-3 py-2">Disponível: {item.quantity ?? "-"}</div>
                                   </div>
 
-                                  <div className="mt-3 grid gap-2">
-                                    <label className="block">
-                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Critico</span>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={variantDraft?.criticalStockThreshold ?? ""}
-                                        onChange={(event) =>
-                                          updateVariantDraft(selectedGroup.parentSku, item.sku, "criticalStockThreshold", event.target.value)
-                                        }
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                        placeholder={`Padrao ${selectedDraft.criticalStockThreshold || item.effectiveCriticalStockThreshold}`}
-                                      />
-                                    </label>
-                                    <label className="block">
-                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Baixo</span>
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={variantDraft?.lowStockThreshold ?? ""}
-                                        onChange={(event) =>
-                                          updateVariantDraft(selectedGroup.parentSku, item.sku, "lowStockThreshold", event.target.value)
-                                        }
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-                                        placeholder={`Padrao ${selectedDraft.lowStockThreshold || item.effectiveLowStockThreshold}`}
-                                      />
-                                    </label>
-                                    <label className="block">
-                                      <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
-                                      <input
+                                    <div className="mt-3 grid gap-2">
+                                      <label className="block">
+                                        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Pedido</span>
+                                        <input
                                         type="number"
                                         min={0}
                                         value={orderQuantities[item.sku] ?? ""}
@@ -1616,8 +1964,8 @@ export function AdminProductInventoryManager({
       ) : null}
 
       {importModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
-          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:rounded-[2rem] sm:p-6">
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4" onClick={() => setImportModalOpen(false)}>
+          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[2rem] border border-white/60 bg-white/95 p-4 shadow-panel sm:max-h-[92vh] sm:max-w-6xl sm:rounded-[2rem] sm:p-6" onClick={(event) => event.stopPropagation()}>
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d27a4f]">Importacao integrada</p>
@@ -1663,6 +2011,27 @@ function InfoBox({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl bg-white/80 px-3 py-2">
       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
       <p className="mt-1 text-sm font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function InfoPill({
+  label,
+  value,
+  tone,
+  compact = false
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn("rounded-xl bg-white px-3 py-2", tone)}>
+      <p className={cn("font-semibold uppercase tracking-[0.12em] text-slate-400", compact ? "text-[10px]" : "text-[11px]")}>
+        {label}
+      </p>
+      <p className={cn("mt-1 font-semibold text-slate-900", compact ? "text-xs" : "text-sm")}>{value}</p>
     </div>
   );
 }
