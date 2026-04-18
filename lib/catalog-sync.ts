@@ -80,7 +80,13 @@ async function removeCatalogProduct(db: DbClient, catalogProductId: string) {
   });
 }
 
-export async function syncCatalogProductByParentSku(db: DbClient, parentSku: string) {
+export async function syncCatalogProductByParentSku(
+  db: DbClient,
+  parentSku: string,
+  options?: {
+    preserveInventory?: boolean;
+  }
+) {
   const parent = await loadOperationalParent(db, parentSku);
 
   if (!parent || parent.kind !== ProductKind.PARENT) {
@@ -296,32 +302,40 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
           }
         });
 
-    await db.catalogInventory.upsert({
+    const existingInventory = await db.catalogInventory.findUnique({
       where: {
         catalogVariantId: catalogVariant.id
-      },
-      update: {
-        availableMultiCompanyStock: null,
-        stockStatus: "not_imported",
-        inventorySyncStatus: "STALE",
-        lastStockSyncAt: null,
-        source: "foundation_pending_reconcile",
-        sourceAccountKey: null,
-        lastReconciledTinyId: null,
-        rawPayload: null
-      },
-      create: {
-        catalogVariantId: catalogVariant.id,
-        availableMultiCompanyStock: null,
-        stockStatus: "not_imported",
-        inventorySyncStatus: "STALE",
-        lastStockSyncAt: null,
-        source: "foundation_pending_reconcile",
-        sourceAccountKey: null,
-        lastReconciledTinyId: null,
-        rawPayload: null
       }
     });
+
+    if (!options?.preserveInventory || !existingInventory) {
+      await db.catalogInventory.upsert({
+        where: {
+          catalogVariantId: catalogVariant.id
+        },
+        update: {
+          availableMultiCompanyStock: null,
+          stockStatus: "not_imported",
+          inventorySyncStatus: "STALE",
+          lastStockSyncAt: null,
+          source: "foundation_pending_reconcile",
+          sourceAccountKey: null,
+          lastReconciledTinyId: null,
+          rawPayload: null
+        },
+        create: {
+          catalogVariantId: catalogVariant.id,
+          availableMultiCompanyStock: null,
+          stockStatus: "not_imported",
+          inventorySyncStatus: "STALE",
+          lastStockSyncAt: null,
+          source: "foundation_pending_reconcile",
+          sourceAccountKey: null,
+          lastReconciledTinyId: null,
+          rawPayload: null
+        }
+      });
+    }
 
     await db.catalogImage.deleteMany({
       where: {
@@ -331,7 +345,7 @@ export async function syncCatalogProductByParentSku(db: DbClient, parentSku: str
       }
     });
 
-    if (variant.imageUrl) {
+    if (variant.imageUrl && variant.imageUrl !== parent.imageUrl) {
       await db.catalogImage.create({
         data: {
           catalogProductId: catalogProduct.id,

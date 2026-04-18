@@ -173,6 +173,7 @@ Ler em `CatalogProduct`:
 - `name`
 - atributos principais
 - vinculos de fornecedor
+- `mainImageUrl`
 
 ### Variacao
 
@@ -192,6 +193,23 @@ Ler em `CatalogInventory`:
 - `availableMultiCompanyStock`
 - `inventorySyncStatus`
 - `lastStockSyncAt`
+
+### Imagem oficial do portal
+
+O portal nao deve consultar o Tiny em tempo de tela para decidir foto.
+
+Ordem oficial da imagem:
+
+1. imagem propria da variacao, se existir
+2. `CatalogProduct.mainImageUrl`
+3. `CatalogImage` primaria do pai
+4. placeholder visual do portal
+
+### Como a fundacao mantem a foto atualizada
+
+- webhook de `stock`, `sales` ou `orders` pode disparar hidratacao de catalogo e midia
+- se o SKU chegar sem familia completa ou sem foto confiavel, a fundacao busca o pai no Tiny em bastidor
+- a foto e a galeria ficam persistidas na fundacao para o portal nao depender do Tiny ao abrir a tela
 
 ### Tiny ID por conta
 

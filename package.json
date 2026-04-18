@@ -18,6 +18,7 @@
     "smoke:http": "node scripts/http-smoke-runner.mjs",
     "tiny:inspect:sku": "tsx scripts/inspect-tiny-sku.ts",
     "tiny:import:sku": "tsx scripts/import-tiny-sku-to-foundation.ts",
+    "foundation:hydrate:catalog": "tsx scripts/hydrate-foundation-catalog.ts",
     "foundation:live-check": "tsx scripts/foundation-live-check.ts",
     "foundation:apply": "tsx scripts/apply-foundation-structure.ts",
     "foundation:reset:test-data": "tsx scripts/reset-foundation-test-data.ts",

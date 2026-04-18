@@ -7,6 +7,7 @@ import {
   finalizeFoundationSyncRun,
   finalizeFoundationWebhookProcessing
 } from "@/lib/foundation-event-orchestrator";
+import { tryHydrateFoundationCatalogBySku } from "@/lib/foundation-catalog-hydration";
 import {
   getPepperPhysicalStockAccountKey,
   getPepperTinyAccountLabel,
@@ -484,11 +485,29 @@ export async function handleTinyStockWebhook(
   });
 
   try {
-    const catalogVariantId = await resolveFoundationCatalogVariantIdByWebhookIdentifiers({
+    let catalogVariantId = await resolveFoundationCatalogVariantIdByWebhookIdentifiers({
       accountKey,
       sku,
       tinyProductId
     });
+
+    if (!catalogVariantId) {
+      const hydrationTargetSku = sku ?? parentSku;
+
+      if (hydrationTargetSku) {
+        await tryHydrateFoundationCatalogBySku({
+          sku: hydrationTargetSku,
+          triggerType: "stock_webhook_catalog_hydration",
+          reason: "missing_catalog_variant"
+        });
+
+        catalogVariantId = await resolveFoundationCatalogVariantIdByWebhookIdentifiers({
+          accountKey,
+          sku,
+          tinyProductId
+        });
+      }
+    }
 
     if (!catalogVariantId) {
       await finalizeFoundationWebhookProcessing({
@@ -589,6 +608,14 @@ export async function handleTinyStockWebhook(
         reconciledFromSignal: !isSyntheticSmokeEvent
       }
     });
+
+    if (persisted.sku) {
+      await tryHydrateFoundationCatalogBySku({
+        sku: persisted.sku,
+        triggerType: "stock_webhook_catalog_media",
+        reason: "ensure_media"
+      });
+    }
 
     return {
       ok: true,

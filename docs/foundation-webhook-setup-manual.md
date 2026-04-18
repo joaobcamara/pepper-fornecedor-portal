@@ -132,6 +132,7 @@ Isso significa:
 - o valor persistido em `CatalogInventory` passa a ser sempre o saldo multiempresa reconsultado
 - `CatalogVariantAccountState` passa a registrar o retrato por conta a cada reconciliacao valida
 - se o evento vier de `Show Look` ou `On Shop` sem contexto comercial, ele continua sendo marcado como `anomalia`, mas a reconciliacao do saldo acontece do mesmo jeito
+- quando o SKU ou a familia ainda estiverem incompletos na fundacao, o webhook tambem pode disparar hidratacao de catalogo/midia para gravar foto do pai e galeria oficial
 
 ### 4. Receber notificacoes de notas fiscais autorizadas
 

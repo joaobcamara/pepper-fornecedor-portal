@@ -56,6 +56,7 @@ O que da para fazer:
 - controlar visibilidade do card no portal
 - importar SKU faltante do Tiny para a fundacao
 - ler estoque multiempresa oficial
+- manter foto do pai e galeria oficial na fundacao
 
 Como fazer:
 
@@ -63,6 +64,11 @@ Como fazer:
 - se faltar SKU, consultar Tiny Pepper
 - persistir o produto completo na fundacao
 - responder o portal a partir da fundacao
+- foto do portal deve vir da fundacao; a ordem oficial e:
+  - foto da filha, se existir
+  - foto do pai na fundacao
+  - placeholder visual
+- webhook comercial ou de estoque pode virar gatilho de hidratacao de catalogo/midia quando o SKU ainda nao estiver completo
 
 Manual principal:
 

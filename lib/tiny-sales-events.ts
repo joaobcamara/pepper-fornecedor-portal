@@ -7,6 +7,7 @@ import {
   finalizeFoundationSyncRun,
   finalizeFoundationWebhookProcessing
 } from "@/lib/foundation-event-orchestrator";
+import { tryHydrateFoundationCatalogBySku } from "@/lib/foundation-catalog-hydration";
 import { prisma } from "@/lib/prisma";
 import { buildCustomerAiPackage, buildOrderContextAi, buildSalesItemContextAi } from "@/lib/sales-ai";
 import { normalizeSku } from "@/lib/sku";
@@ -213,7 +214,7 @@ async function resolveCatalogVariantBySku(sku?: string | null) {
   if (!sku) return null;
 
   const normalized = normalizeSku(sku);
-  const catalogVariant = await prisma.catalogVariant.findUnique({
+  let catalogVariant = await prisma.catalogVariant.findUnique({
     where: { sku: normalized },
     include: {
       catalogProduct: {
@@ -223,6 +224,31 @@ async function resolveCatalogVariantBySku(sku?: string | null) {
       }
     }
   });
+
+  if (!catalogVariant) {
+    await tryHydrateFoundationCatalogBySku({
+      sku: normalized,
+      triggerType: "sales_webhook_catalog_hydration",
+      reason: "missing_catalog_variant"
+    });
+
+    catalogVariant = await prisma.catalogVariant.findUnique({
+      where: { sku: normalized },
+      include: {
+        catalogProduct: {
+          include: {
+            supplierLinks: true
+          }
+        }
+      }
+    });
+  } else {
+    await tryHydrateFoundationCatalogBySku({
+      sku: normalized,
+      triggerType: "sales_webhook_catalog_media",
+      reason: "ensure_media"
+    });
+  }
 
   return catalogVariant;
 }

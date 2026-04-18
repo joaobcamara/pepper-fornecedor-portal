@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -203,7 +202,9 @@ function ProductReferenceThumbnail({
   sku: string;
   size?: "card" | "hero";
 }) {
-  const fallback = isBrandFallbackImage(imageUrl);
+  const [failed, setFailed] = useState(false);
+  const resolvedImageUrl = !failed && imageUrl ? imageUrl : "/brand/pepper-logo.png";
+  const fallback = isBrandFallbackImage(resolvedImageUrl);
   const dimensionClassName = size === "hero" ? "h-24 w-24 rounded-[1.75rem]" : "h-20 w-20 rounded-[1.5rem]";
 
   return (
@@ -214,12 +215,14 @@ function ProductReferenceThumbnail({
         fallback ? "border-[#f3d5c3] bg-[#fff7f1]" : "border-white/80 bg-white"
       )}
     >
-      <Image
-        src={imageUrl}
+      <img
+        src={resolvedImageUrl}
         alt={alt}
-        fill
-        sizes={size === "hero" ? "96px" : "80px"}
-        className={cn(fallback ? "object-contain p-3" : "object-cover")}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className={cn("h-full w-full", fallback ? "object-contain p-3" : "object-cover")}
       />
       <div className="absolute inset-x-2 bottom-2">
         <span

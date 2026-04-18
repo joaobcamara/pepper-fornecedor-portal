@@ -25,6 +25,8 @@ type TinyApiEnvelope = {
   };
 };
 
+export const PORTAL_BRAND_FALLBACK_IMAGE = "/brand/pepper-logo.png";
+
 export type TinyRecord = Record<string, unknown>;
 
 type TinySearchCandidate = {
@@ -308,23 +310,31 @@ function formatTinyDate(value: Date) {
   });
 }
 
-function extractImageUrl(record: Record<string, unknown>) {
+export function extractImageUrls(record: Record<string, unknown>) {
   const directCandidates = [
+    record.imageUrl,
     record.imagemExterna,
     record.urlImagemExterna,
     record.imagemURL,
     record.imagem,
     record.url_imagem
   ];
+  const urls: string[] = [];
 
   for (const candidate of directCandidates) {
     const value = toStringValue(candidate);
     if (value) {
-      return value;
+      urls.push(value);
     }
   }
 
-  const arrayCandidates = [record.imagensExternas, record.imagens, record.anexos];
+  const arrayCandidates = [
+    record.imagensExternas,
+    record.imagens_externas,
+    record.imagens,
+    record.anexos,
+    record.anexosExternos
+  ];
 
   for (const candidate of arrayCandidates) {
     if (!Array.isArray(candidate)) {
@@ -337,15 +347,31 @@ function extractImageUrl(record: Record<string, unknown>) {
         toStringValue(item.url) ??
         toStringValue(item.link) ??
         toStringValue(item.imagemExterna) ??
+        toStringValue(item.anexo) ??
         toStringValue(item.arquivo);
 
       if (value) {
-        return value;
+        urls.push(value);
       }
     }
   }
 
-  return null;
+  return Array.from(new Set(urls));
+}
+
+export function extractImageUrl(record: Record<string, unknown>) {
+  return extractImageUrls(record)[0] ?? null;
+}
+
+export function preferTinyImage(existingImageUrl: string | null | undefined, incomingImageUrl: string | null | undefined) {
+  const existing = toStringValue(existingImageUrl);
+  const incoming = toStringValue(incomingImageUrl);
+
+  if (!existing || existing === PORTAL_BRAND_FALLBACK_IMAGE) {
+    return incoming ?? existing ?? PORTAL_BRAND_FALLBACK_IMAGE;
+  }
+
+  return existing;
 }
 
 function extractVariationType(record: Record<string, unknown>) {
@@ -466,7 +492,7 @@ function getVariantRefs(record: Record<string, unknown>) {
     .filter(Boolean) as Array<{ id?: string | null; sku?: string | null }>;
 }
 
-async function getTinyProductStructureById(id: string, accountKey: TinyAccountKey = "pepper") {
+export async function getTinyProductStructureById(id: string, accountKey: TinyAccountKey = "pepper") {
   const payload = await callTiny("produto.obter.estrutura.php", { id }, accountKey);
   const product = unwrapTinyItem(payload.retorno?.produto);
   const structure = Array.isArray(product.estrutura) ? product.estrutura : [];
@@ -667,7 +693,7 @@ export async function searchTinyProductsBySku(sku: string, accountKey: TinyAccou
     .filter(Boolean) as TinySearchCandidate[];
 }
 
-async function getTinyProductById(id: string, accountKey: TinyAccountKey = "pepper") {
+export async function getTinyProductById(id: string, accountKey: TinyAccountKey = "pepper") {
   const payload = await callTiny("produto.obter.php", { id }, accountKey);
   return unwrapTinyItem(payload.retorno?.produto);
 }
@@ -823,8 +849,14 @@ function buildVariantFromDetail(detail: Record<string, unknown>, fallbackImage?:
   };
 }
 
-export async function inspectTinyProductBySku(inputSku: string): Promise<TinyInspectionResult> {
+export async function inspectTinyProductBySku(
+  inputSku: string,
+  options?: {
+    includeStock?: boolean;
+  }
+): Promise<TinyInspectionResult> {
   const sku = normalizeSku(inputSku);
+  const includeStock = options?.includeStock ?? true;
   const parentSku = getParentSku(sku) || sku;
   const parentSearchResults = await searchTinyProductsBySku(parentSku, "pepper");
   const directSearchResults = sku === parentSku ? parentSearchResults : await searchTinyProductsBySku(sku, "pepper");
@@ -901,6 +933,10 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
             return null;
           }
 
+          if (!includeStock) {
+            return variant;
+          }
+
           const quantity = await getTinyStockByProductId(variant.id, "pepper");
           return {
             ...variant,
@@ -912,7 +948,7 @@ export async function inspectTinyProductBySku(inputSku: string): Promise<TinyIns
   ).filter(Boolean) as TinyInspectedVariant[];
 
   if (variants.length === 0 && parsedParentSku) {
-    const quantity = resolvedParentId ? await getTinyStockByProductId(resolvedParentId, "pepper") : null;
+    const quantity = includeStock && resolvedParentId ? await getTinyStockByProductId(resolvedParentId, "pepper") : null;
     variants.push({
       id: resolvedParentId ?? resolvedParentSku,
       sku: resolvedParentSku,
@@ -986,7 +1022,7 @@ export async function importTinyProductBySku(params: {
         tinyProductId: inspection.parent.id,
         tinyVariationId: null,
         tinyCode: inspection.parent.sku,
-        imageUrl: existingParent?.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
+        imageUrl: preferTinyImage(existingParent?.imageUrl, inspection.parent.imageUrl),
         active: existingParent?.active ?? true,
         kind: ProductKind.PARENT,
         syncStatus: InventorySyncStatus.FRESH,
@@ -997,12 +1033,13 @@ export async function importTinyProductBySku(params: {
       const parent = existingParent
         ? await prisma.product.update({
             where: { sku: inspection.parent.sku },
-            data: {
-              tinyProductId: parentData.tinyProductId,
-              tinyCode: parentData.tinyCode,
-              syncStatus: InventorySyncStatus.FRESH,
-              lastSyncedAt: now,
-              fallbackInventory: parentData.fallbackInventory
+          data: {
+            tinyProductId: parentData.tinyProductId,
+            tinyCode: parentData.tinyCode,
+            imageUrl: parentData.imageUrl,
+            syncStatus: InventorySyncStatus.FRESH,
+            lastSyncedAt: now,
+            fallbackInventory: parentData.fallbackInventory
             }
           })
         : await prisma.product.create({ data: parentData });
@@ -1032,8 +1069,7 @@ export async function importTinyProductBySku(params: {
                 tinyProductId: variant.id,
                 tinyVariationId: variant.id,
                 tinyCode: variant.sku,
-                imageUrl:
-                  existingVariant.imageUrl ?? variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
+                imageUrl: preferTinyImage(existingVariant.imageUrl, variant.imageUrl ?? inspection.parent.imageUrl),
                 parentId: parentId ?? undefined,
                 syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
                 lastSyncedAt: now,
@@ -1052,7 +1088,7 @@ export async function importTinyProductBySku(params: {
                 tinyProductId: variant.id,
                 tinyVariationId: variant.id,
                 tinyCode: variant.sku,
-                imageUrl: variant.imageUrl ?? inspection.parent.imageUrl ?? "/brand/pepper-logo.png",
+                imageUrl: preferTinyImage(null, variant.imageUrl ?? inspection.parent.imageUrl),
                 kind: ProductKind.VARIANT,
                 parentId: parentId ?? undefined,
                 syncStatus: variant.quantity === null ? InventorySyncStatus.ERROR : InventorySyncStatus.FRESH,
@@ -1095,7 +1131,7 @@ export async function importTinyProductBySku(params: {
             tinyProductId: variant.id,
             sku: variant.sku,
             tinyCode: variant.sku,
-            imageUrl: variant.imageUrl,
+            imageUrl: variant.imageUrl ?? inspection.parent.imageUrl ?? null,
             rawPayload: JSON.stringify(variant.raw),
             selectedForImport: true,
             status: "imported"
@@ -1132,7 +1168,9 @@ export async function importTinyProductBySku(params: {
     });
 
     if (parentId) {
-      await syncCatalogProductByParentSku(prisma, inspection.parent.sku);
+      await syncCatalogProductByParentSku(prisma, inspection.parent.sku, {
+        preserveInventory: true
+      });
     }
 
     return {
