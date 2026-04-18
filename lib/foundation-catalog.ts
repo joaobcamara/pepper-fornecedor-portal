@@ -27,6 +27,7 @@ export type FoundationCatalogSupplierLink = {
   id: string;
   name: string;
   slug: string;
+  logoUrl: string | null;
   active?: boolean;
   supplierSalePrice?: number | null;
   criticalStockThreshold?: number | null;
@@ -359,6 +360,7 @@ async function loadFoundationCatalogProductsInternal(params: FoundationCatalogLo
         id: link.supplier.id,
         name: link.supplier.name,
         slug: link.supplier.slug,
+        logoUrl: link.supplier.logoUrl ?? null,
         active: link.active,
         supplierSalePrice: link.supplierSalePrice ?? null,
         criticalStockThreshold: link.criticalStockThreshold ?? null,

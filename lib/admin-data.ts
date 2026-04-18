@@ -75,6 +75,7 @@ export type AdminDashboardData = {
     suppliers: Array<{
       id: string;
       name: string;
+      logoUrl?: string | null;
       supplierSalePrice?: number | null;
       criticalStockThreshold?: number | null;
       lowStockThreshold?: number | null;
@@ -603,6 +604,7 @@ export async function getAdminPageData(): Promise<AdminDashboardData> {
         {
           id: link.id,
           name: link.name,
+          logoUrl: link.logoUrl ?? null,
           supplierSalePrice: link.supplierSalePrice ?? null,
           criticalStockThreshold: link.criticalStockThreshold ?? null,
           lowStockThreshold: link.lowStockThreshold ?? null

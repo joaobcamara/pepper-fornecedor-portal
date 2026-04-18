@@ -569,6 +569,12 @@ function ProductModal({
   const [message, setMessage] = useState<string | null>(null);
   const sizes = Array.from(new Set(product.matrix.flatMap((row) => row.items.map((item) => item.size))));
   const isSingleSizeProduct = sizes.length === 1;
+  const singleSizeItems = product.matrix.flatMap((row) =>
+    row.items.map((item) => ({
+      item,
+      color: row.color
+    }))
+  );
 
   function suggestQuantitiesWithPepperIa() {
     const suggestedQuantities = Object.fromEntries(
@@ -759,57 +765,56 @@ function ProductModal({
 
             <div className="hidden lg:block">
               {isSingleSizeProduct ? (
-                <div className="space-y-4 rounded-[1.7rem] border border-[#f4d7c7] bg-white p-4">
-                  {product.matrix.map((row) => (
-                    <section key={row.color} className="rounded-[1.4rem] border border-[#f8e4d9] bg-[#fffaf6] p-4">
-                      <h3 className="text-sm font-semibold text-slate-900">{row.color}</h3>
-                      <div className="mt-4 grid grid-cols-5 gap-3">
-                        {row.items.filter(Boolean).map((item) => {
-                          const safeItem = item!;
-                          return (
-                            <div key={safeItem.sku} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center">
-                              <p className="text-lg font-semibold text-slate-900">{safeItem.quantity ?? "-"}</p>
-                              <p
-                                className={cn(
-                                  "mt-2 text-[11px] font-semibold",
-                                  safeItem.band === "critical" && "text-rose-700",
-                                  safeItem.band === "low" && "text-amber-700",
-                                  safeItem.band === "ok" && "text-emerald-700",
-                                  safeItem.band === "unknown" && "text-slate-500"
-                                )}
-                              >
-                                {safeItem.status}
-                              </p>
-                              <p className="mt-1 text-[11px] text-slate-400">
-                                critico {safeItem.criticalStockThreshold} | baixo {safeItem.lowStockThreshold}
-                              </p>
-                              <div className="mt-3 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
-                                <p className="rounded-xl bg-white px-2 py-2">Reservado: {safeItem.reservedStock ?? 0}</p>
-                                <div className="mt-2 flex items-center justify-center gap-3 rounded-xl bg-white px-2 py-2">
-                                  <span>Hoje: {safeItem.salesToday}</span>
-                                  <span>7d: {safeItem.sales7d}</span>
-                                  <span>30d: {safeItem.sales30d}</span>
-                                </div>
-                              </div>
-                              <input
-                                type="number"
-                                min={0}
-                                value={quantities[safeItem.sku] ?? ""}
-                                onChange={(event) =>
-                                  setQuantities((current) => ({
-                                    ...current,
-                                    [safeItem.sku]: Number(event.target.value || 0)
-                                  }))
-                                }
-                                className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm outline-none"
-                                placeholder="Sugerir"
-                              />
-                            </div>
-                          );
-                        })}
+                <div className="rounded-[1.7rem] border border-[#f4d7c7] bg-white p-4">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-slate-900">Cores</h3>
+                    <span className="rounded-full bg-[#fff3ec] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#a94c25]">
+                      {sizes[0] ?? "Unico"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-3">
+                    {singleSizeItems.map(({ item: safeItem, color }) => (
+                      <div key={safeItem.sku} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-center">
+                        <p className="text-lg font-semibold text-slate-900">{safeItem.quantity ?? "-"}</p>
+                        <p className="mt-1 text-[11px] text-slate-500">{color}</p>
+                        <p
+                          className={cn(
+                            "mt-2 text-[11px] font-semibold",
+                            safeItem.band === "critical" && "text-rose-700",
+                            safeItem.band === "low" && "text-amber-700",
+                            safeItem.band === "ok" && "text-emerald-700",
+                            safeItem.band === "unknown" && "text-slate-500"
+                          )}
+                        >
+                          {safeItem.status}
+                        </p>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          critico {safeItem.criticalStockThreshold} | baixo {safeItem.lowStockThreshold}
+                        </p>
+                        <div className="mt-3 border-t border-slate-200 pt-2 text-[11px] text-slate-500">
+                          <p className="rounded-xl bg-white px-2 py-2">Reservado: {safeItem.reservedStock ?? 0}</p>
+                          <div className="mt-2 flex items-center justify-center gap-3 rounded-xl bg-white px-2 py-2">
+                            <span>Hoje: {safeItem.salesToday}</span>
+                            <span>7d: {safeItem.sales7d}</span>
+                            <span>30d: {safeItem.sales30d}</span>
+                          </div>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          value={quantities[safeItem.sku] ?? ""}
+                          onChange={(event) =>
+                            setQuantities((current) => ({
+                              ...current,
+                              [safeItem.sku]: Number(event.target.value || 0)
+                            }))
+                          }
+                          className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-sm outline-none"
+                          placeholder="Sugerir"
+                        />
                       </div>
-                    </section>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="overflow-hidden rounded-[1.7rem] border border-[#f4d7c7]">
